@@ -1,0 +1,22 @@
+{
+  "appId": "com.reflect.app",
+  "appName": "REFLECT",
+  "webDir": "build",
+  "server": {
+    "androidScheme": "https"
+  },
+  "plugins": {
+    "LocalNotifications": {
+      "smallIcon": "ic_stat_icon_config_sample",
+      "iconColor": "#FFB4A9",
+      "sound": "beep.wav"
+    },
+    "StatusBar": {
+      "style": "DARK",
+      "backgroundColor": "#FFFDF7"
+    }
+  },
+  "ios": {
+    "contentInset": "automatic"
+  }
+}
