@@ -2,6 +2,5 @@
   "buildCommand": "yarn build",
   "outputDirectory": "build",
   "installCommand": "yarn install",
-  "framework": null,
-  "rootDirectory": "frontend"
+  "framework": null
 }
