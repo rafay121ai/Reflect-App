@@ -19,6 +19,7 @@ import { getReflectionMode } from "./lib/reflectionMode";
 import AuthScreen from "./components/AuthScreen";
 import { BookOpen, Settings } from "lucide-react";
 import { supabase } from "./lib/supabase";
+import { SpeedInsights } from '@vercel/speed-insights/react';
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || "http://localhost:8000";
 const API = `${BACKEND_URL}/api`;
@@ -663,6 +664,7 @@ function App() {
           This is a reflection space, not therapy. If you're in crisis, please reach out to a mental health professional.
         </p>
       </footer>
+      <SpeedInsights />
     </div>
   );
 }
