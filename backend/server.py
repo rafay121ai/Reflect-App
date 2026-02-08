@@ -89,16 +89,23 @@ def startup():
         t.start()
         logging.info("Personalization auto-refresh: every %.1f hours", PERSONALIZATION_REFRESH_INTERVAL_HOURS)
 
-# CORS: set ALLOWED_ORIGINS in production (e.g. https://your-app.vercel.app)
-_cors_origins = os.getenv("ALLOWED_ORIGINS", "http://localhost:3000,http://127.0.0.1:3000").strip().split(",")
-_cors_origins = [o.strip() for o in _cors_origins if o.strip()]
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=_cors_origins,
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+# CORS: set ALLOWED_ORIGINS in production (e.g. https://your-app.vercel.app or https://*.vercel.app for previews)
+_cors_raw = os.getenv("ALLOWED_ORIGINS", "http://localhost:3000,http://127.0.0.1:3000").strip().split(",")
+_cors_exact = []
+_cors_regex_str = None
+for o in _cors_raw:
+    o = o.strip()
+    if not o:
+        continue
+    if "*" in o:
+        # e.g. https://*.vercel.app -> allow any subdomain
+        _cors_regex_str = o.replace(".", r"\.").replace("*", "[^/]+")
+    else:
+        _cors_exact.append(o)
+_cors_kw = {"allow_origins": _cors_exact, "allow_credentials": True, "allow_methods": ["*"], "allow_headers": ["*"]}
+if _cors_regex_str:
+    _cors_kw["allow_origin_regex"] = f"^{_cors_regex_str}$"
+app.add_middleware(CORSMiddleware, **_cors_kw)
 
 
 class ReflectRequest(BaseModel):

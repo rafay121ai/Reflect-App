@@ -1,8 +1,9 @@
 import { createContext, useContext, useEffect, useState } from "react";
 import { supabase } from "../lib/supabase";
 import { setAuthToken, syncProfile } from "../lib/api";
+import { getBackendUrl } from "../lib/config";
 
-const API_BASE = `${process.env.REACT_APP_BACKEND_URL || "http://localhost:8000"}/api`;
+const API_BASE = `${getBackendUrl()}/api`;
 
 const AuthContext = createContext({
   user: null,

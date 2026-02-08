@@ -19,8 +19,9 @@ import { getReflectionMode } from "./lib/reflectionMode";
 import AuthScreen from "./components/AuthScreen";
 import { BookOpen, Settings } from "lucide-react";
 import { supabase } from "./lib/supabase";
+import { getBackendUrl } from "./lib/config";
 
-const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || "http://localhost:8000";
+const BACKEND_URL = getBackendUrl();
 const API = `${BACKEND_URL}/api`;
 
 const REVISIT_LATER_KEY = "revisit_later";
@@ -197,7 +198,7 @@ function App() {
       if (status === 404) msg = "Backend route not found (404). Start the REFLECT backend: cd backend && uvicorn server:app --reload";
       else if (typeof detail === "string") msg = detail;
       else if (Array.isArray(detail) && detail[0]?.msg) msg = detail[0].msg;
-      else if (error.code === "ERR_NETWORK" || error.message?.includes("Network")) msg = "Cannot reach the server. Is the backend running at " + (BACKEND_URL || "http://localhost:8000") + "?";
+      else if (error.code === "ERR_NETWORK" || error.message?.includes("Network")) msg = "Cannot reach the server. Is the backend running at " + BACKEND_URL + "?";
       toast.error(msg);
       setAppState(STATES.INPUT);
     }
