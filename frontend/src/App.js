@@ -129,6 +129,14 @@ function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps -- run only when user is set; pendingSaveAfterSignIn/refetchHistory are intentionally omitted to avoid re-runs.
   }, [user]);
 
+  // When user signs in from My reflections (no pending save), close the modal and show affirmation.
+  useEffect(() => {
+    if (!user || !showSignInModal) return;
+    if (pendingSaveAfterSignIn) return; // save-after-sign-in effect above handles that flow
+    setShowSignInModal(false);
+    toast.success("You're signed in.");
+  }, [user, showSignInModal, pendingSaveAfterSignIn]);
+
   // When user signs in, load history so My reflections and Settings show correct state
   useEffect(() => {
     if (!user?.id || !authRequired) return;

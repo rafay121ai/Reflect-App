@@ -20,7 +20,7 @@ from ollama_client import (
 logger = logging.getLogger(__name__)
 
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "").strip()
-OPENROUTER_MODEL = os.getenv("OPENROUTER_MODEL", "openai/gpt-4o-mini").strip() or "openai/gpt-4o-mini"
+OPENROUTER_MODEL = os.getenv("OPENROUTER_MODEL", "deepseek/deepseek-r1-0528").strip() or "deepseek/deepseek-r1-0528"
 
 
 def _chat(prompt: str, system: str | None = None) -> str:

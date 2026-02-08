@@ -89,9 +89,12 @@ def startup():
         t.start()
         logging.info("Personalization auto-refresh: every %.1f hours", PERSONALIZATION_REFRESH_INTERVAL_HOURS)
 
+# CORS: set ALLOWED_ORIGINS in production (e.g. https://your-app.vercel.app)
+_cors_origins = os.getenv("ALLOWED_ORIGINS", "http://localhost:3000,http://127.0.0.1:3000").strip().split(",")
+_cors_origins = [o.strip() for o in _cors_origins if o.strip()]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
+    allow_origins=_cors_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
