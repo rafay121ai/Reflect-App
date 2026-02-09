@@ -1,6 +1,10 @@
 """
 Verify Supabase JWT and return user id for protected routes.
 Uses legacy HS256 (JWT Secret) signing only.
+
+Supabase project must use Legacy JWT: in Dashboard → Project Settings → API,
+enable "Legacy API keys" or ensure JWT Secret is used for signing (HS256).
+New projects that use ES256/JWKS will get 401 here until legacy is enabled.
 """
 import logging
 import os
