@@ -98,13 +98,19 @@ function App() {
     if (dailyNudgeShownThisSession.current) dailyNudgeShownThisSession.current = false;
   }, [user]);
 
-  // After sign-in: skip onboarding only for returning users (per-user persistence).
+  // After sign-in: show onboarding for first-time users; skip only if this user has completed it (per-user persistence).
   useEffect(() => {
     if (!user?.id || !authRequired) return;
     try {
       const doneForUser = localStorage.getItem(ONBOARDING_DONE_KEY);
-      if (doneForUser === user.id) setAppState(STATES.INPUT);
-    } catch (_) {}
+      if (doneForUser === user.id) {
+        setAppState(STATES.INPUT);
+      } else {
+        setAppState(STATES.ONBOARDING);
+      }
+    } catch (_) {
+      setAppState(STATES.ONBOARDING);
+    }
   }, [user?.id, authRequired]);
 
   useEffect(() => {
