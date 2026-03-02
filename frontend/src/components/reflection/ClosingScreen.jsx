@@ -47,7 +47,7 @@ const ClosingScreen = ({
             className="text-xl text-[#A0AEC0]"
             style={{ fontFamily: "'Fraunces', serif" }}
           >
-            Preparing your closing...
+            One thing to carry…
           </motion.div>
         ) : (
           <div
@@ -142,7 +142,7 @@ const ClosingScreen = ({
             className="bg-transparent border border-current rounded-full px-8 py-2.5 text-sm opacity-55 hover:opacity-90 transition-opacity duration-200 tracking-wide cursor-pointer text-[#5A5568]"
             style={{ letterSpacing: "0.05em" }}
           >
-            Close
+            I'll carry this
           </button>
         </motion.div>
       )}

@@ -59,7 +59,9 @@ const MoodCheckIn = ({
 
     setIsSubmitting(true);
     try {
-      await onSubmitMood(reflectionId, wordOrPhrase, description);
+      if (onSubmitMood) {
+        await onSubmitMood(reflectionId, wordOrPhrase, description);
+      }
       setIsSubmitted(true);
       onDone?.(wordOrPhrase);
     } catch (err) {

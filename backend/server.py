@@ -28,13 +28,22 @@ from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 from starlette.requests import Request
+from starlette.middleware.base import BaseHTTPMiddleware
+from fastapi.middleware.trustedhost import TrustedHostMiddleware
 
 from auth import require_user_id
+from security import sanitize_for_llm
 
 from llm_provider import get_reflection, get_personalized_mirror, extract_pattern, get_mood_suggestions, get_reminder_message, get_insight_letter, get_closing, convert_moods_to_feelings, llm_chat
 from pattern_analyzer import analyze_patterns_deep_sync
 from revenuecat_client import get_subscription_status as get_rc_subscription_status
 from usage_limits import enforce_reflection_limit, rollback_reflection_usage
+from lemon_squeezy_client import (
+    verify_webhook_signature,
+    parse_subscription_event,
+    is_duplicate_event,
+    record_event,
+)
 from supabase_client import (
     get_personalization_context,
     insert_reflection,
@@ -66,6 +75,8 @@ from supabase_client import (
     delete_user_data,
     refresh_personalization_context_for_user,
     refresh_personalization_context_all,
+    get_user_usage,
+    ensure_user_usage_row,
 )
 
 # So Supabase and Ollama client warnings/errors show in the uvicorn terminal
@@ -142,6 +153,19 @@ def startup():
 
 # CORS: get allowed origins from environment (set ALLOWED_ORIGINS in production)
 ALLOWED_ORIGINS = [o.strip() for o in os.getenv("ALLOWED_ORIGINS", "http://localhost:3000").split(",") if o.strip()]
+
+# Safety check — never allow wildcard CORS with credentials in production
+_env = os.getenv("ENV", "development")
+if "*" in ALLOWED_ORIGINS and _env == "production":
+    raise RuntimeError(
+        "ALLOWED_ORIGINS='*' is not permitted in production. "
+        "Set explicit origins in the ALLOWED_ORIGINS env var."
+    )
+if "*" in ALLOWED_ORIGINS and len(ALLOWED_ORIGINS) > 1:
+    raise RuntimeError(
+        "Do not mix '*' with specific origins in ALLOWED_ORIGINS."
+    )
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=ALLOWED_ORIGINS,
@@ -149,6 +173,42 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Trusted hosts — configure via ALLOWED_HOSTS env
+ALLOWED_HOSTS = [o.strip() for o in os.getenv("ALLOWED_HOSTS", "localhost,127.0.0.1").split(",") if o.strip()]
+app.add_middleware(TrustedHostMiddleware, allowed_hosts=ALLOWED_HOSTS)
+
+
+class SecurityHeadersMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request, call_next):
+        response = await call_next(request)
+        response.headers.setdefault("X-Frame-Options", "DENY")
+        response.headers.setdefault("X-Content-Type-Options", "nosniff")
+        response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+        response.headers.setdefault(
+            "Permissions-Policy",
+            "camera=(), microphone=(), geolocation=()",
+        )
+        response.headers.setdefault(
+            "Strict-Transport-Security",
+            "max-age=31536000; includeSubDomains; preload",
+        )
+        response.headers.setdefault(
+            "Content-Security-Policy",
+            "default-src 'self'; "
+            "script-src 'self' https://app.lemonsqueezy.com; "
+            "connect-src 'self' https://app.lemonsqueezy.com "
+            "https://*.supabase.co https://api.openrouter.ai "
+            "https://api.openai.com; "
+            "img-src 'self' data: https:; "
+            "style-src 'self' 'unsafe-inline'; "
+            "frame-src https://app.lemonsqueezy.com; "
+            "frame-ancestors 'none';",
+        )
+        return response
+
+
+app.add_middleware(SecurityHeadersMiddleware)
 
 
 class ReflectRequest(BaseModel):
@@ -204,6 +264,18 @@ class ClosingRequest(BaseModel):
     mood_word: str | None = Field(default=None, max_length=200)
     reflection_id: str | None = Field(default=None, max_length=100)  # if set, we update this row in Supabase with closing_text
     reflection_mode: str | None = Field(default="gentle", max_length=50)  # "gentle" | "direct" | "quiet"
+
+
+class GuestReflection(BaseModel):
+    thought: str = Field(max_length=5000)
+    mirror: str = Field(default="", max_length=8000)
+    mood: str | None = Field(default=None, max_length=200)
+    closing: str | None = Field(default=None, max_length=8000)
+    created_at: str | None = Field(default=None, max_length=64)
+
+
+class MigrateGuestRequest(BaseModel):
+    reflections: list[GuestReflection] = Field(default_factory=list, max_items=2)
 
 
 @app.get("/")
@@ -290,13 +362,14 @@ def _do_reflect(body: ReflectRequest, user_id: str | None = None, background_tas
     user_context = (get_personalization_context(user_id) or {}) if user_id else {}
     try:
         thought = body.thought.strip()
+        safe_thought = sanitize_for_llm(thought)
         # Validate and pass reflection mode to LLM
         mode = (body.reflection_mode or "gentle").lower()
         if mode not in ("gentle", "direct", "quiet"):
             mode = "gentle"
-        sections = get_reflection(thought, reflection_mode=mode, user_context=user_context)
+        sections = get_reflection(safe_thought, reflection_mode=mode, user_context=user_context)
         pattern_id = None
-        pattern = extract_pattern(thought, sections)
+        pattern = extract_pattern(safe_thought, sections)
         if pattern:
             pattern_id = insert_reflection_pattern(
                 pattern.get("emotional_tone"),
@@ -335,6 +408,106 @@ def reflect(request: Request, body: ReflectRequest, background_tasks: Background
     return _do_reflect(body, user_id=user_id, background_tasks=background_tasks)
 
 
+@app.post("/api/webhooks/lemon-squeezy")
+async def webhook_lemon_squeezy(
+    request: Request,
+    x_signature: str = Header(None, alias="X-Signature"),
+):
+    import json
+    from supabase_client import update_user_plan
+
+    payload = await request.body()
+
+    # 1. Verify signature
+    if not verify_webhook_signature(payload, x_signature or ""):
+        raise HTTPException(status_code=401, detail="Invalid signature")
+
+    try:
+        body = json.loads(payload.decode("utf-8"))
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid JSON")
+
+    event = parse_subscription_event(body)
+    if not event or not event.get("user_id"):
+        return {"ok": True}
+
+    # 2. Deduplicate — reject replayed events
+    event_id = (body.get("meta") or {}).get("event_id", "") or ""
+    event_name = event.get("event_name", "")
+
+    if is_duplicate_event(event_id):
+        return {"ok": True, "skipped": "duplicate"}
+
+    # 3. Process subscription change
+    user_id = event["user_id"]
+    status = event.get("status") or ""
+    plan_type = event.get("plan_type") or "monthly"
+
+    try:
+        if status == "active":
+            update_user_plan(user_id, plan_type)
+        elif status in ("cancelled", "expired"):
+            update_user_plan(user_id, "trial")
+    finally:
+        # 4. Mark as processed (best-effort)
+        record_event(event_id, event_name)
+
+    return {"ok": True}
+
+
+@app.post("/api/reflect/guest")
+@limiter.limit("10/minute")
+def reflect_guest(request: Request, body: ReflectRequest, background_tasks: BackgroundTasks):
+    """
+    Guest reflection endpoint: no auth, no per-user limits. Uses the same LLM flow
+    but skips subscription/usage checks because there is no user_id.
+    """
+    return _do_reflect(body, user_id=None, background_tasks=None)
+
+
+@app.post("/api/migrate-guest-reflections")
+def migrate_guest_reflections(body: MigrateGuestRequest, user_id: str = Depends(require_user_id)):
+    """
+    Migrate up to 2 guest reflections from localStorage into saved_reflections for this user
+    and ensure a trial usage row exists.
+    """
+    refs = body.reflections or []
+    if not refs:
+        return {"migrated": 0}
+
+    migrated = 0
+    for ref in refs[:2]:
+        try:
+            raw_text = (ref.thought or "").strip()
+            mirror_text = (ref.mirror or "").strip()
+            mood_word = (ref.mood or "").strip() or None
+            if not raw_text and not mirror_text:
+                continue
+            inserted_id = insert_saved_reflection(
+                user_identifier=user_id,
+                raw_text=raw_text,
+                answers=[],
+                mirror_response=mirror_text,
+                mood_word=mood_word,
+                revisit_type=None,
+            )
+            if inserted_id:
+                migrated += 1
+        except Exception as e:
+            logging.warning("migrate_guest_reflections insert failed for %s: %s", user_id, e)
+
+    # Activate trial if this user has no usage row yet
+    try:
+        usage = get_user_usage(user_id)
+        if not usage:
+            now_iso = datetime.now(timezone.utc).isoformat()
+            ensure_user_usage_row(user_id, "trial", now_iso, trial_start=now_iso)
+    except Exception as e:
+        logging.warning("migrate_guest_reflections trial activation failed for %s: %s", user_id, e)
+
+    return {"migrated": migrated}
+
+
 @app.post("/api/mirror/personalized")
 @limiter.limit("10/minute")
 def mirror_personalized(request: Request, body: MirrorRequest, user_id: str = Depends(require_user_id)):
@@ -343,11 +516,29 @@ def mirror_personalized(request: Request, body: MirrorRequest, user_id: str = De
     user_context = get_personalization_context(user_id) or {}
     try:
         thought = body.thought.strip()
+        safe_thought = sanitize_for_llm(thought)
+        safe_thought = sanitize_for_llm(thought)
         questions = body.questions
         answers = body.answers if isinstance(body.answers, list) else [body.answers.get(q, body.answers.get(str(i), "")) for i, q in enumerate(questions)]
-        content = get_personalized_mirror(thought, questions, answers, user_context=user_context)
+        content = get_personalized_mirror(safe_thought, questions, answers, user_context=user_context)
         if body.reflection_id:
             update_reflection(body.reflection_id, questions, answers, content)
+        return {"content": content}
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Ollama error: {e}")
+
+
+@app.post("/api/mirror/personalized/guest")
+@limiter.limit("10/minute")
+def mirror_personalized_guest(request: Request, body: MirrorRequest):
+    if not (body.thought or "").strip():
+        raise HTTPException(status_code=400, detail="thought is required")
+    try:
+        thought = body.thought.strip()
+        safe_thought = sanitize_for_llm(thought)
+        questions = body.questions
+        answers = body.answers if isinstance(body.answers, list) else [body.answers.get(q, body.answers.get(str(i), "")) for i, q in enumerate(questions)]
+        content = get_personalized_mirror(safe_thought, questions, answers, user_context={})
         return {"content": content}
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Ollama error: {e}")
@@ -367,12 +558,33 @@ def closing(request: Request, body: ClosingRequest, user_id: str = Depends(requi
         mirror = body.mirror_response.strip()
         mood_word = (body.mood_word or "").strip() or None
         mode = body.reflection_mode or "gentle"
-        
-        closing_text = get_closing(thought, body.answers, mirror, mood_word, mode, user_context=user_context)
+
+        closing_text = get_closing(safe_thought, body.answers, mirror, mood_word, mode, user_context=user_context)
         
         if body.reflection_id:
             update_reflection_closing(body.reflection_id, closing_text)
         
+        return {"closing_text": closing_text}
+    except Exception as e:
+        logging.exception("Closing generation failed: %s", e)
+        raise HTTPException(status_code=502, detail=f"Closing generation error: {e}")
+
+
+@app.post("/api/closing/guest")
+@limiter.limit("10/minute")
+def closing_guest(request: Request, body: ClosingRequest):
+    """Guest closing: no auth, no reflection DB updates."""
+    if not (body.thought or "").strip():
+        raise HTTPException(status_code=400, detail="thought is required")
+    if not (body.mirror_response or "").strip():
+        raise HTTPException(status_code=400, detail="mirror_response is required")
+    try:
+        thought = body.thought.strip()
+        safe_thought = sanitize_for_llm(thought)
+        mirror = body.mirror_response.strip()
+        mood_word = (body.mood_word or "").strip() or None
+        mode = body.reflection_mode or "gentle"
+        closing_text = get_closing(safe_thought, body.answers, mirror, mood_word, mode, user_context={})
         return {"closing_text": closing_text}
     except Exception as e:
         logging.exception("Closing generation failed: %s", e)
@@ -394,7 +606,9 @@ def remind(request: Request, body: RemindRequest, user_id: str = Depends(require
         thought = (reflection.get("thought") or "").strip() if reflection else None
         mirror = (reflection.get("personalized_mirror") or "").strip() if reflection else None
         mirror_snippet = mirror[:200] if mirror else None
-        message = get_reminder_message(thought=thought, mirror_snippet=mirror_snippet)
+        safe_thought = sanitize_for_llm(thought or "")
+        safe_mirror = sanitize_for_llm(mirror_snippet or "")
+        message = get_reminder_message(thought=safe_thought, mirror_snippet=safe_mirror)
     except Exception as e:
         logging.warning("Reminder message generation failed, using fallback: %s", e)
     try:
@@ -430,6 +644,19 @@ def reminder_delete(reminder_id: str, user_id: str = Depends(require_user_id)):
 @limiter.limit("10/minute")
 def mood_suggest(request: Request, body: MoodSuggestRequest, user_id: str = Depends(require_user_id)):
     """Suggest 4–5 metaphor phrases with descriptions from thought + mirror. Not judging—offering language they might borrow."""
+    thought = (body.thought or "").strip()
+    mirror_text = (body.mirror_text or "").strip() or None
+    try:
+        suggestions = get_mood_suggestions(thought, mirror_text)
+        return {"suggestions": suggestions}
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=str(e))
+
+
+@app.post("/api/mood/suggest/guest")
+@limiter.limit("10/minute")
+def mood_suggest_guest(request: Request, body: MoodSuggestRequest):
+    """Guest version of mood suggestions: no auth, no personalization context."""
     thought = (body.thought or "").strip()
     mirror_text = (body.mirror_text or "").strip() or None
     try:
@@ -597,6 +824,52 @@ def user_profile_update(body: ProfileUpdateRequest, user_id: str = Depends(requi
     if not updated:
         raise HTTPException(status_code=500, detail="Failed to update profile")
     return updated
+
+
+@app.get("/api/usage")
+def usage_get(user_id: str = Depends(require_user_id)):
+    """
+    Return current usage/plan state for this user.
+    plan_type: 'trial' | 'monthly' | 'yearly'
+    trial_expires_at: trial_start + 7 days (ISO) for trial users.
+    """
+    from datetime import timedelta
+
+    row = get_user_usage(user_id) or {}
+    plan_type = (row.get("plan_type") or "trial").strip().lower()
+    reflections_used = int(row.get("reflections_used") or 0)
+
+    trial_start_raw = row.get("trial_start") or row.get("period_start")
+    trial_start_iso = None
+    trial_expires_at = None
+    days_remaining = None
+    is_expired = False
+
+    if plan_type == "trial" and trial_start_raw:
+        try:
+            if isinstance(trial_start_raw, str):
+                ts = datetime.fromisoformat(str(trial_start_raw).replace("Z", "+00:00"))
+            else:
+                ts = trial_start_raw
+            if ts.tzinfo is None:
+                ts = ts.replace(tzinfo=timezone.utc)
+            trial_start_iso = ts.isoformat()
+            expires = ts + timedelta(days=7)
+            trial_expires_at = expires.isoformat()
+            now = datetime.now(timezone.utc)
+            is_expired = now >= expires
+            days_remaining = max(0, (expires.date() - now.date()).days)
+        except Exception as e:
+            logging.debug("usage_get trial parse failed for %s: %s", user_id, e)
+
+    return {
+        "plan_type": plan_type,
+        "reflections_used": reflections_used,
+        "trial_start": trial_start_iso,
+        "trial_expires_at": trial_expires_at,
+        "days_remaining": days_remaining,
+        "is_expired": is_expired,
+    }
 
 
 @app.post("/api/user/profile/sync")

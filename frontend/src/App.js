@@ -19,9 +19,13 @@ import { getOrCreateUserIdentifier } from "./lib/userId";
 import { getReflectionMode } from "./lib/reflectionMode";
 import AuthScreen from "./components/AuthScreen";
 import PaywallLimitModal from "./components/PaywallLimitModal";
+import GuestSignupModal from "./components/GuestSignupModal";
+import TrialWelcomeModal, { hasSeenTrialWelcome } from "./components/TrialWelcomeModal";
+import TrialExpiredModal from "./components/TrialExpiredModal";
 import { BookOpen, Settings } from "lucide-react";
 import { supabase } from "./lib/supabase";
 import { getBackendUrl } from "./lib/config";
+import { getGuestCount, saveGuestReflection, GUEST_MAX_REFLECTIONS } from "./lib/guestSession";
 
 const BACKEND_URL = getBackendUrl();
 const API = `${BACKEND_URL}/api`;
@@ -61,6 +65,12 @@ function App() {
   const [closingText, setClosingText] = useState(null);
   const [isReflectSubmitting, setIsReflectSubmitting] = useState(false);
   const [showPaywallLimitModal, setShowPaywallLimitModal] = useState(false);
+  const [guestSignupStage, setGuestSignupStage] = useState(null); // "soft" | "firm" | "hard_block" | null
+  const [showGuestSignupModal, setShowGuestSignupModal] = useState(false);
+  const [usage, setUsage] = useState(null);
+  const [showTrialWelcome, setShowTrialWelcome] = useState(false);
+  const [showTrialBanner, setShowTrialBanner] = useState(false);
+  const [showTrialExpiredModal, setShowTrialExpiredModal] = useState(false);
   const revisitBannerTimeoutRef = useRef(null);
   const dailyNudgeShownThisSession = useRef(false);
   const openReflectionRef = useRef((id) => {
@@ -146,11 +156,18 @@ function App() {
   }, []);
 
   useEffect(() => {
-    axios.get(`${API}/reminders/due`, { headers: getAuthHeaders() }).then((res) => {
-      const list = res.data?.reminders ?? [];
-      setDueReminders(Array.isArray(list) ? list : []);
-    }).catch(() => setDueReminders([]));
-  }, []);
+    if (!user || !authRequired) {
+      setDueReminders([]);
+      return;
+    }
+    axios
+      .get(`${API}/reminders/due`, { headers: getAuthHeaders() })
+      .then((res) => {
+        const list = res.data?.reminders ?? [];
+        setDueReminders(Array.isArray(list) ? list : []);
+      })
+      .catch(() => setDueReminders([]));
+  }, [user, authRequired]);
 
   useEffect(() => {
     if (!historyDropdownOpen) return;
@@ -195,6 +212,77 @@ function App() {
       .catch(() => setHistoryAll([]));
   }, [user?.id, authRequired]);
 
+  // When user signs in, fetch usage (plan / trial info)
+  useEffect(() => {
+    if (!user?.id || !authRequired) return;
+    axios
+      .get(`${API}/usage`, { headers: getAuthHeaders() })
+      .then((res) => setUsage(res.data || null))
+      .catch(() => setUsage(null));
+  }, [user?.id, authRequired]);
+
+  // Show trial welcome modal once when coming from ?welcome=trial
+  useEffect(() => {
+    if (!user || !authRequired) return;
+    if (typeof window === "undefined") return;
+    const params = new URLSearchParams(window.location.search);
+    const welcome = params.get("welcome");
+    if (welcome === "trial" && !hasSeenTrialWelcome()) {
+      setShowTrialWelcome(true);
+    }
+    if (welcome) {
+      params.delete("welcome");
+      const search = params.toString();
+      const nextUrl = search ? `${window.location.pathname}?${search}` : window.location.pathname;
+      window.history.replaceState({}, document.title, nextUrl);
+    }
+  }, [user, authRequired]);
+
+  // Trial day-7 banner and expired modal (web only, uses /api/usage)
+  useEffect(() => {
+    if (!usage || !user || !authRequired) return;
+    const { plan_type: planType, days_remaining: daysRemaining, is_expired: isExpired } = usage;
+    if (planType !== "trial") {
+      setShowTrialBanner(false);
+      setShowTrialExpiredModal(false);
+      return;
+    }
+    let isNative = false;
+    try {
+      // eslint-disable-next-line global-require
+      const { Capacitor } = require("@capacitor/core");
+      isNative = Capacitor.isNativePlatform();
+    } catch {
+      isNative = false;
+    }
+    if (isNative) {
+      setShowTrialBanner(false);
+      setShowTrialExpiredModal(false);
+      return;
+    }
+    if (isExpired) {
+      setShowTrialExpiredModal(true);
+      setShowTrialBanner(false);
+      return;
+    }
+    if (typeof daysRemaining === "number" && daysRemaining === 1) {
+      if (typeof window === "undefined") return;
+      const todayKey = new Date().toISOString().slice(0, 10);
+      const storageKey = `reflect_trial_banner_dismissed_${todayKey}`;
+      let dismissed = false;
+      try {
+        dismissed = window.localStorage.getItem(storageKey) === "true";
+      } catch {
+        dismissed = false;
+      }
+      if (!dismissed) {
+        setShowTrialBanner(true);
+      }
+    } else {
+      setShowTrialBanner(false);
+    }
+  }, [usage, user, authRequired]);
+
   // Daily reminder nudge: when on main screen (and Settings closed), past reminder time, not reflected today. Re-runs when Settings closes so turning the nudge on there triggers a check.
   useEffect(() => {
     if (!user || appState !== STATES.INPUT || settingsPanelOpen) return;
@@ -236,16 +324,25 @@ function App() {
     if (!thought.trim()) return;
     if (isReflectSubmitting) return;
 
+    // Guest gating: after 2 guest reflections, require sign-up before allowing another
+    if (!user && getGuestCount() >= GUEST_MAX_REFLECTIONS) {
+      setGuestSignupStage("hard_block");
+      setShowGuestSignupModal(true);
+      return;
+    }
+
     setIsReflectSubmitting(true);
     setAppState(STATES.LOADING);
 
     try {
       // Include reflection mode in request - affects LLM tone/length
       const reflectionMode = getReflectionMode();
-      const response = await axios.post(`${API}/reflect`, {
+      const url = user ? `${API}/reflect` : `${API}/reflect/guest`;
+      const config = user ? { headers: getAuthHeaders() } : {};
+      const response = await axios.post(url, {
         thought: thought.trim(),
         reflection_mode: reflectionMode,
-      }, { headers: getAuthHeaders() });
+      }, config);
       setReflection({ id: response.data.id ?? null, sections: response.data.sections });
       setAppState(STATES.REFLECTION);
     } catch (error) {
@@ -275,12 +372,14 @@ function App() {
 
   const handleGetPersonalizedMirror = async (questionResponses) => {
     try {
-      const response = await axios.post(`${API}/mirror/personalized`, {
+      const url = user ? `${API}/mirror/personalized` : `${API}/mirror/personalized/guest`;
+      const config = user ? { headers: getAuthHeaders() } : {};
+      const response = await axios.post(url, {
         thought: thought.trim(),
         questions: questionResponses.map((r) => r.question),
         answers: questionResponses.map((r) => r.response),
-        ...(reflection?.id && { reflection_id: reflection.id }),
-      }, { headers: getAuthHeaders() });
+        ...(user && reflection?.id && { reflection_id: reflection.id }),
+      }, config);
       return response.data.content;
     } catch (error) {
       console.error("Personalized mirror error:", error);
@@ -291,10 +390,12 @@ function App() {
 
   const handleFetchMoodSuggestions = async (thought, mirrorText) => {
     try {
-      const response = await axios.post(`${API}/mood/suggest`, {
+      const url = user ? `${API}/mood/suggest` : `${API}/mood/suggest/guest`;
+      const config = user ? { headers: getAuthHeaders() } : {};
+      const response = await axios.post(url, {
         thought: (thought || "").trim(),
         mirror_text: (mirrorText || "").trim() || undefined,
-      }, { headers: getAuthHeaders() });
+      }, config);
       return response.data.suggestions ?? [];
     } catch (error) {
       console.error("Mood suggestions error:", error);
@@ -304,14 +405,16 @@ function App() {
 
   const handleGetClosing = async (moodWord, answers, personalizedMirror) => {
     try {
-      const response = await axios.post(`${API}/closing`, {
+      const url = user ? `${API}/closing` : `${API}/closing/guest`;
+      const config = user ? { headers: getAuthHeaders() } : {};
+      const response = await axios.post(url, {
         thought: thought.trim(),
         answers: Array.isArray(answers) ? answers.map(a => a.response || a) : answers,
         mirror_response: personalizedMirror || "",
         mood_word: moodWord || null,
-        ...(reflection?.id && { reflection_id: reflection.id }),
+        ...(user && reflection?.id && { reflection_id: reflection.id }),
         reflection_mode: getReflectionMode(),
-      }, { headers: getAuthHeaders() });
+      }, config);
       
       const closing = response.data.closing_text;
       setClosingText(closing);
@@ -514,19 +617,22 @@ function App() {
     ? (firstDueReminder?.message || "You wanted to come back to this.")
     : "You have a reflection waiting.";
 
+  const dismissTrialBannerForToday = () => {
+    if (typeof window === "undefined") return;
+    try {
+      const todayKey = new Date().toISOString().slice(0, 10);
+      const storageKey = `reflect_trial_banner_dismissed_${todayKey}`;
+      window.localStorage.setItem(storageKey, "true");
+    } catch {
+      // ignore
+    }
+    setShowTrialBanner(false);
+  };
+
   if (loading) {
     return (
       <div className="min-h-screen bg-[#FFFDF7] flex items-center justify-center">
         <p className="text-sm text-[#718096]">Loading…</p>
-      </div>
-    );
-  }
-
-  if (authRequired && !user) {
-    return (
-      <div className="min-h-screen bg-[#FFFDF7]" data-testid="app-container">
-        <Toaster position="top-center" richColors />
-        <AuthScreen />
       </div>
     );
   }
@@ -549,6 +655,35 @@ function App() {
               }
             }}
           />
+        )}
+      </AnimatePresence>
+
+      {/* Guest sign-up modal for unauthenticated reflections */}
+      <AnimatePresence>
+        {showGuestSignupModal && guestSignupStage && (
+          <GuestSignupModal
+            stage={guestSignupStage}
+            onSkip={
+              guestSignupStage === "hard_block"
+                ? undefined
+                : () => {
+                    setShowGuestSignupModal(false);
+                    setGuestSignupStage(null);
+                  }
+            }
+          />
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {showTrialWelcome && (
+          <TrialWelcomeModal onClose={() => setShowTrialWelcome(false)} />
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {showTrialExpiredModal && (
+          <TrialExpiredModal onFallbackSettings={() => setSettingsPanelOpen(true)} />
         )}
       </AnimatePresence>
 
@@ -727,6 +862,22 @@ function App() {
         </div>
       )}
 
+      {showTrialBanner && (
+        <div className="sticky top-0 z-30 mx-auto max-w-2xl px-6 py-3 flex items-center justify-between gap-3 bg-[#FFB4A9]/20 text-[#4A5568] border-b border-[#FFB4A9]/30">
+          <p className="text-sm">
+            One day left — no pressure, just a heads up.
+          </p>
+          <button
+            type="button"
+            onClick={dismissTrialBannerForToday}
+            className="text-xs text-[#64748B] hover:text-[#2D3748]"
+            aria-label="Dismiss trial banner"
+          >
+            Close
+          </button>
+        </div>
+      )}
+
       <main className="max-w-2xl mx-auto px-6 md:px-8 py-12 md:py-16">
         <AnimatePresence mode="wait">
           {appState === STATES.VIEWING_REFLECTION && viewingReflectionId && (
@@ -776,13 +927,32 @@ function App() {
               reflectionId={reflection.id ?? null}
               onGetPersonalizedMirror={handleGetPersonalizedMirror}
               onFetchMoodSuggestions={handleFetchMoodSuggestions}
-              onMoodSubmit={handleMoodSubmit}
-              onSaveHistory={handleSaveHistory}
+              onMoodSubmit={user ? handleMoodSubmit : undefined}
+              onSaveHistory={user ? handleSaveHistory : undefined}
               onGetClosing={handleGetClosing}
               onComeBackLater={handleComeBackLater}
               onSetReminder={handleSetReminder}
               onReflectAnother={handleReflectAnother}
               onStartFresh={handleStartFresh}
+              onReflectionComplete={
+                user
+                  ? undefined
+                  : (data) => {
+                      const count = saveGuestReflection({
+                        thought: data.thought,
+                        mirror: data.mirror,
+                        mood: data.mood,
+                        closing: data.closing,
+                      });
+                      if (count === 1) {
+                        setGuestSignupStage("soft");
+                        setShowGuestSignupModal(true);
+                      } else if (count === 2) {
+                        setGuestSignupStage("firm");
+                        setShowGuestSignupModal(true);
+                      }
+                    }
+              }
             />
           )}
         </AnimatePresence>

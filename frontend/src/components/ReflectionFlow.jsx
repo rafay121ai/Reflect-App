@@ -12,8 +12,18 @@ const STEPS = {
   QUESTIONS: 1,
   MIRROR: 2,
   MOOD: 3,
-  CLOSING: 4
+  CLOSING: 4,
 };
+
+const STEP_LABELS = ["Begin", "Write", "Sit", "Notice", "Carry"];
+
+const STEP_SUBTEXT = [
+  "A gentle landing before we start.",
+  "Put words to what's here.",
+  "Let the reflection meet you.",
+  "Name the feel of this moment.",
+  "Take a breath before you go.",
+];
 
 const ReflectionFlow = ({
   sections,
@@ -28,6 +38,7 @@ const ReflectionFlow = ({
   onSetReminder,
   onReflectAnother,
   onStartFresh,
+  onReflectionComplete,
 }) => {
   const [currentStep, setCurrentStep] = useState(STEPS.JOURNEY);
   const [personalizedMirror, setPersonalizedMirror] = useState(null);
@@ -38,6 +49,7 @@ const ReflectionFlow = ({
   const [isLoadingClosing, setIsLoadingClosing] = useState(false);
   /** 'come_back' | 'remind' | null – used to skip mark-opened and send revisit_type when saving */
   const [userChoseRevisitType, setUserChoseRevisitType] = useState(null);
+  const [lastMoodWord, setLastMoodWord] = useState(null);
 
   // Extract questions from sections
   const findSection = (keyword) => {
@@ -78,6 +90,7 @@ const ReflectionFlow = ({
   };
 
   const handleMoodDone = (moodWord) => {
+    setLastMoodWord(moodWord || null);
     // Save history in background (don't await/block)
     if (onSaveHistory && originalThought && personalizedMirror != null) {
       const answers = Array.isArray(questionResponses)
@@ -139,31 +152,47 @@ const ReflectionFlow = ({
       className="flex flex-col min-h-[80vh] pb-24"
       data-testid="reflection-flow"
     >
-      {/* Progress indicator - 5 steps: Begin, Write, Sit, Notice, Close */}
+      {/* Mobile: single step heading */}
+      <motion.div
+        initial={{ opacity: 0, y: -6 }}
+        animate={{ opacity: 1, y: 0 }}
+        className="mb-6 text-center md:hidden"
+      >
+        <p className="text-xs uppercase tracking-[0.18em] text-[#A0AEC0] mb-1">
+          {STEP_LABELS[currentStep]}
+        </p>
+        <p className="text-[11px] text-[#CBD5E0]">
+          {STEP_SUBTEXT[currentStep]}
+        </p>
+      </motion.div>
+
+      {/* Desktop: full progress indicator - 5 steps: Begin, Write, Sit, Notice, Close */}
       <motion.div
         initial={{ opacity: 0, y: -10 }}
         animate={{ opacity: 1, y: 0 }}
-        className="flex items-center justify-center gap-2 sm:gap-4 mb-10 flex-wrap"
+        className="hidden md:flex items-center justify-center gap-2 sm:gap-4 mb-10 flex-wrap"
         data-testid="progress-indicator"
       >
-        {["Begin", "Write", "Sit", "Notice", "Close"].map((label, index) => (
+        {STEP_LABELS.map((label, index) => (
           <div key={label} className="flex items-center gap-2">
             <motion.div
               animate={{
                 scale: index === currentStep ? 1.2 : 1,
-                backgroundColor: index <= currentStep ? "#FFB4A9" : "#E2E8F0"
+                backgroundColor: index <= currentStep ? "#FFB4A9" : "#E2E8F0",
               }}
               transition={{ duration: 0.3 }}
               className={`w-3 h-3 rounded-full ${
                 index === currentStep ? "shadow-lg shadow-[#FFB4A9]/40" : ""
               }`}
             />
-            <span className={`text-sm transition-colors duration-300 ${
-              index === currentStep ? "text-[#4A5568] font-medium" : "text-[#A0AEC0]"
-            }`}>
+            <span
+              className={`text-sm transition-colors duration-300 ${
+                index === currentStep ? "text-[#4A5568] font-medium" : "text-[#A0AEC0]"
+              }`}
+            >
               {label}
             </span>
-            {index < 4 && (
+            {index < STEP_LABELS.length - 1 && (
               <div className="w-6 sm:w-8 h-px bg-[#E2E8F0] mx-1 sm:mx-2" />
             )}
           </div>
@@ -250,6 +279,14 @@ const ReflectionFlow = ({
               closingText={closingText}
               isLoading={isLoadingClosing}
               onDone={() => {
+                if (onReflectionComplete && originalThought && personalizedMirror != null) {
+                  onReflectionComplete({
+                    thought: originalThought.trim(),
+                    mirror: personalizedMirror,
+                    mood: lastMoodWord || null,
+                    closing: closingText || "",
+                  });
+                }
                 // Trigger existing app completion flow
                 if (onReflectAnother) {
                   onReflectAnother();

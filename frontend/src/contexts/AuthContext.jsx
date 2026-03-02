@@ -54,6 +54,20 @@ export function AuthProvider({ children }) {
         const errorFromUrl = params.get("error") || hashParams.get("error");
         const errorDesc = params.get("error_description") || hashParams.get("error_description");
 
+        const clearAuthQuery = () => {
+          try {
+            const current = new URLSearchParams(window.location.search);
+            current.delete("code");
+            current.delete("error");
+            current.delete("error_description");
+            const search = current.toString();
+            const nextUrl = search ? `${window.location.pathname}?${search}` : window.location.pathname;
+            window.history.replaceState({}, document.title, nextUrl);
+          } catch {
+            window.history.replaceState({}, document.title, window.location.pathname);
+          }
+        };
+
         if (errorFromUrl && !cancelled) {
           setError(
             errorDesc
@@ -61,13 +75,13 @@ export function AuthProvider({ children }) {
               : "Sign-in failed. Check Google and Supabase settings."
           );
           setLoading(false);
-          window.history.replaceState({}, document.title, window.location.pathname);
+          clearAuthQuery();
           return;
         }
 
         const code = params.get("code");
 
-        if (code) {
+          if (code) {
           const { data, error: exchangeError } = await supabase.auth.exchangeCodeForSession(code);
 
           if (!cancelled) {
@@ -76,13 +90,13 @@ export function AuthProvider({ children }) {
               setSession(null);
               setUser(null);
               setAuthToken(null);
-            } else {
+              } else {
               setSession(data.session);
               setUser(data.session?.user ?? null);
               setAuthToken(data.session?.access_token ?? null);
               syncProfile(API_BASE).catch(() => {});
             }
-            window.history.replaceState({}, document.title, window.location.pathname);
+            clearAuthQuery();
             setLoading(false);
           }
         } else {
@@ -123,20 +137,25 @@ export function AuthProvider({ children }) {
     };
   }, []);
 
-  const signInWithGoogle = async () => {
+  const signInWithGoogle = async (opts = {}) => {
     setError(null);
     if (!supabase) {
       setError("Auth is not configured.");
       return;
     }
-    const redirectTo = getRedirectTo();
-    const options = {
+    let redirectTo = getRedirectTo();
+    if (opts.trial && redirectTo) {
+      redirectTo = redirectTo.includes("?")
+        ? `${redirectTo}&trial=true`
+        : `${redirectTo}?trial=true`;
+    }
+    const authOptions = {
       redirectTo: redirectTo || window.location.origin + "/auth/callback",
       scopes: "https://www.googleapis.com/auth/userinfo.email https://www.googleapis.com/auth/userinfo.profile",
     };
     const { error: e } = await supabase.auth.signInWithOAuth({
       provider: "google",
-      options,
+      options: authOptions,
     });
     if (e) setError(e.message);
     return e;
