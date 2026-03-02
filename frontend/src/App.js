@@ -29,6 +29,7 @@ const API = `${BACKEND_URL}/api`;
 const REVISIT_LATER_KEY = "revisit_later";
 const SIGNIN_PROMPT_COUNT_KEY = "reflect_signin_prompt_count";
 const SIGNIN_PROMPT_MAX = 2;
+const ONBOARDING_DONE_KEY = "reflect_onboarding_done";
 
 const STATES = {
   ONBOARDING: 'onboarding',
@@ -96,6 +97,15 @@ function App() {
     } catch (_) {}
     if (dailyNudgeShownThisSession.current) dailyNudgeShownThisSession.current = false;
   }, [user]);
+
+  // After sign-in: skip onboarding only for returning users (per-user persistence).
+  useEffect(() => {
+    if (!user?.id || !authRequired) return;
+    try {
+      const doneForUser = localStorage.getItem(ONBOARDING_DONE_KEY);
+      if (doneForUser === user.id) setAppState(STATES.INPUT);
+    } catch (_) {}
+  }, [user?.id, authRequired]);
 
   useEffect(() => {
     openReflectionRef.current = (id) => {
@@ -205,6 +215,11 @@ function App() {
   }, [user, appState, settingsPanelOpen]);
 
   const handleOnboardingComplete = () => {
+    if (user?.id) {
+      try {
+        localStorage.setItem(ONBOARDING_DONE_KEY, user.id);
+      } catch (_) {}
+    }
     setAppState(STATES.INPUT);
     if (isRevenueCatSupported && !isPremium) {
       setTimeout(() => presentPaywallIfNeeded().catch(() => {}), 1200);
