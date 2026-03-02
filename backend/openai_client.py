@@ -1,5 +1,7 @@
 """
-Ollama client for REFLECT – calls your local Ollama (e.g. Qwen) for reflections.
+OpenAI client for REFLECT – uses OpenAI API for reflections.
+Set LLM_PROVIDER=openai and OPENAI_API_KEY in .env.
+Model: OPENAI_MODEL (default gpt-4.1-mini).
 """
 import json
 import logging
@@ -7,14 +9,24 @@ import os
 import re
 import httpx
 
+from ollama_client import (
+    _parse_sections,
+    _parse_mood_json,
+    MOOD_SUGGESTIONS_FALLBACK,
+    REMINDER_MESSAGE_FALLBACK,
+    INSIGHT_LETTER_FALLBACK,
+)
+
 logger = logging.getLogger(__name__)
 
-OLLAMA_URL = os.getenv("OLLAMA_URL", "http://localhost:11434")
-OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "qwen")
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "").strip()
+OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini").strip() or "gpt-4o-mini"
 
 
 def _chat(prompt: str, system: str | None = None) -> str:
-    """Send a prompt to Ollama and return the assistant message content."""
+    """Send a prompt to OpenAI and return the assistant message content."""
+    if not OPENAI_API_KEY:
+        raise ValueError("OPENAI_API_KEY is not set")
     messages = []
     if system:
         messages.append({"role": "system", "content": system})
@@ -22,57 +34,22 @@ def _chat(prompt: str, system: str | None = None) -> str:
 
     with httpx.Client(timeout=120.0) as client:
         r = client.post(
-            f"{OLLAMA_URL}/api/chat",
+            "https://api.openai.com/v1/chat/completions",
+            headers={
+                "Authorization": f"Bearer {OPENAI_API_KEY}",
+                "Content-Type": "application/json",
+            },
             json={
-                "model": OLLAMA_MODEL,
+                "model": OPENAI_MODEL,
                 "messages": messages,
-                "stream": False,
             },
         )
         r.raise_for_status()
         data = r.json()
-        return (data.get("message") or {}).get("content") or ""
-
-
-def _parse_sections(text: str) -> list[dict]:
-    """
-    Parse LLM output into sections by ## / ### headers or **Bold** headers.
-    Returns list of { "title": str, "content": str }.
-    """
-    sections = []
-    if not text or not text.strip():
-        return sections
-    t = text.strip()
-    # Prefer ## or ### markdown headers
-    pattern = re.compile(r"^#{2,3}\s*(.+)$", re.MULTILINE)
-    parts = pattern.split(t)
-    if len(parts) >= 3:
-        i = 1
-        while i + 1 < len(parts):
-            title = parts[i].strip()
-            content = parts[i + 1].strip()
-            if title and content:
-                sections.append({"title": title, "content": content})
-            i += 2
-        if sections:
-            return sections
-    # Fallback: try **Bold** style headers (some models use this)
-    bold_pattern = re.compile(r"^\*\*(.+?)\*\*\s*$", re.MULTILINE)
-    parts = bold_pattern.split(t)
-    if len(parts) >= 3:
-        i = 1
-        while i + 1 < len(parts):
-            title = parts[i].strip()
-            content = parts[i + 1].strip()
-            if title and content and len(content) > 10:
-                sections.append({"title": title, "content": content})
-            i += 2
-        if sections:
-            return sections
-    # Single block: treat whole thing as A Mirror
-    if t:
-        sections.append({"title": "A Mirror", "content": t})
-    return sections
+        choice = (data.get("choices") or [None])[0]
+        if not choice:
+            return ""
+        return (choice.get("message") or {}).get("content") or ""
 
 
 # ============================================================================
@@ -159,7 +136,6 @@ def _build_personalization_block(user_context: dict | None) -> str:
 
 # ============================================================================
 # Reflection Mode Configurations
-# Each mode affects tone and length, NOT logic or structure.
 # ============================================================================
 
 REFLECTION_MODE_CONFIGS = {
@@ -391,17 +367,12 @@ Rules that don't change regardless of type:
 
 def get_reflection(thought: str, reflection_mode: str = "gentle", user_context: dict | None = None) -> list[dict]:
     """
-    Call Ollama to generate reflection sections from the user's thought.
+    Call OpenAI to generate reflection sections from the user's thought.
     Uses new architecture: classifier → adaptive questions → sections.
     Returns list of { "title": str, "content": str } for JourneyCards, Some Things to Notice, A Mirror.
-    
-    Args:
-        thought: The user's raw thought
-        reflection_mode: "gentle" (default), "direct", or "quiet"
     """
     personalization_block = _build_personalization_block(user_context)
 
-    # Get mode config (fallback to gentle if invalid)
     mode = reflection_mode.lower() if reflection_mode else "gentle"
     if mode not in REFLECTION_MODE_CONFIGS:
         mode = "gentle"
@@ -414,8 +385,7 @@ def get_reflection(thought: str, reflection_mode: str = "gentle", user_context: 
     # Step 2: Generate adaptive questions based on type
     adaptive_questions = _generate_adaptive_questions(thought, conversation_type, mode)
     questions_text = "\n".join([f"- {q}" for q in adaptive_questions])
-    
-    # Step 3: Generate reflection sections (with adaptive questions embedded)
+
     prompt = f'''Thought: "{thought}"
 
 {personalization_block}
@@ -455,12 +425,11 @@ OUTPUT FORMAT: You MUST start each section with a line containing exactly ## Sec
 
     raw = _chat(prompt, system=config["system"])
     if not (raw and raw.strip()):
-        logger.warning("get_reflection: LLM returned empty response; using fallback sections. Check OLLAMA_URL and model.")
+        logger.warning("get_reflection: LLM returned empty response; using fallback sections. Check OPENAI_API_KEY and model.")
     sections = _parse_sections(raw)
     if not sections and raw and raw.strip():
         logger.warning("get_reflection: LLM response could not be parsed (no ## headers?). First 300 chars: %s", (raw.strip()[:300] if raw else ""))
 
-    # Required section titles the frontend expects (in order)
     required = [
         ("What This Feels Like", "feels like", "Something here is worth noticing. Take a breath."),
         ("Where You're Stuck", "stuck", "There's a place you're circling. No need to fix it yet."),
@@ -469,7 +438,6 @@ OUTPUT FORMAT: You MUST start each section with a line containing exactly ## Sec
         ("Some Things to Notice", "notice", "\n".join(adaptive_questions) if adaptive_questions else "What do you notice right now?\nWhat feels most important?\nWhat do you need?"),
         ("A Mirror", "mirror", raw.strip() if raw.strip() else "What you shared is worth sitting with. Be gentle with yourself."),
     ]
-    # Instruction phrases the model sometimes echoes – treat as invalid content
     instruction_phrases = (
         "1 sentence", "talk to them", "don't describe", "direct address only",
         "use \"you\"", "not \"they\"", "one line each", "do not output",
@@ -493,7 +461,7 @@ OUTPUT FORMAT: You MUST start each section with a line containing exactly ## Sec
 
 def get_personalized_mirror(thought: str, questions: list, answers: dict | list, user_context: dict | None = None) -> str:
     """
-    Call Ollama to generate a short personalized mirror from the thought + Q&A.
+    Call OpenAI to generate a short personalized mirror from the thought + Q&A.
     Uses new three-phase architecture: Attune → Deepen → Reveal
     questions: list of question strings; answers: either dict { question: answer } or list [a1, a2, a3].
     """
@@ -656,10 +624,6 @@ Make it feel like the app genuinely knows them."""
 
 
 def extract_pattern(thought: str, sections: list[dict]) -> dict | None:
-    """
-    Extract pattern (emotional_tone, themes, time_orientation) from thought + sections for reflection_patterns.
-    Returns dict with keys emotional_tone (str), themes (list[str]), time_orientation (str), or None if parse fails.
-    """
     sections_text = "\n".join(
         f"{s.get('title', '')}: {s.get('content', '')[:200]}" for s in sections[:6]
     )
@@ -697,17 +661,14 @@ Output valid JSON only:
     try:
         raw = _chat(prompt, system=system).strip()
         if not raw:
-            logger.warning("Pattern extraction: Ollama returned empty response")
+            logger.warning("Pattern extraction: OpenAI returned empty response")
             return None
-        # Strip markdown code block if present
         if raw.startswith("```"):
             raw = raw.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
-        # Try to find JSON object in response (in case model wrapped it in text)
         if "{" in raw and "}" in raw:
             start = raw.index("{")
             end = raw.rindex("}") + 1
             raw = raw[start:end]
-        # Fix common LLM mistake: model echoes "past" or "future" or "present" or "mixed" -> keep first value only
         raw = re.sub(r'\s+or\s+"[^"]*"\s+or\s+"[^"]*"\s+or\s+"[^"]*"', "", raw)
         data = json.loads(raw)
         emotional_tone = (data.get("emotional_tone") or "").strip() or None
@@ -732,41 +693,7 @@ Output valid JSON only:
         return None
 
 
-def _parse_mood_json(raw: str):
-    """Parse JSON array from LLM; tolerate missing commas between objects (e.g. \"}\" \"{\" -> \"},{\")."""
-    try:
-        return json.loads(raw)
-    except json.JSONDecodeError:
-        pass
-    # Fix missing comma between array elements: "}{" -> "},{"
-    fixed = re.sub(r"\}\s*\{", "},{", raw)
-    try:
-        return json.loads(fixed)
-    except json.JSONDecodeError:
-        pass
-    # Remove trailing comma before ] if present
-    fixed = re.sub(r",\s*]", "]", fixed)
-    try:
-        return json.loads(fixed)
-    except json.JSONDecodeError:
-        raise
-
-
-# Fallback when LLM is unavailable or thought is empty. Phrase + short description (what that feeling/scene often represents).
-MOOD_SUGGESTIONS_FALLBACK = [
-    {"phrase": "foggy morning", "description": "A sense of things being unclear or slow to lift."},
-    {"phrase": "paused traffic", "description": "Waiting, with nowhere to go yet."},
-    {"phrase": "open window", "description": "Something has shifted; a bit of air."},
-    {"phrase": "low battery", "description": "Running on less than usual."},
-    {"phrase": "deep water", "description": "In the middle of something that asks for patience."},
-]
-
-
 def get_mood_suggestions(thought: str, mirror_text: str | None = None) -> list[dict]:
-    """
-    Suggest 4–5 metaphor phrases (scenes) with short descriptions based on their thought and (if provided) their reflection mirror.
-    Not judging—offering language they might borrow. Returns list of { "phrase": str, "description": str }.
-    """
     thought = (thought or "").strip()
     mirror_text = (mirror_text or "").strip()
     if not thought and not mirror_text:
@@ -843,14 +770,7 @@ Return ONLY a JSON array, nothing else:
         return MOOD_SUGGESTIONS_FALLBACK
 
 
-REMINDER_MESSAGE_FALLBACK = "You wanted to come back to this reflection."
-
-
 def get_reminder_message(thought: str | None = None, mirror_snippet: str | None = None) -> str:
-    """
-    Generate one short, gentle sentence for a revisit reminder. Wording only—no scheduling.
-    If thought or mirror_snippet is provided, make it slightly personal; otherwise generic.
-    """
     system = """You write one gentle sentence to remind someone to revisit their reflection. Under 15 words. No quotes. Direct and warm.
 
 If you have context about what they wrote, make it personal. If not, keep it simple."""
@@ -889,15 +809,7 @@ Sound like a caring friend, not a productivity app. No quotes."""
     return REMINDER_MESSAGE_FALLBACK
 
 
-INSIGHT_LETTER_FALLBACK = "These past few days you showed up to reflect. That's worth noticing."
-
-
 def get_insight_letter(reflections_summary: str) -> str:
-    """
-    Generate a personal insight letter (100-150 words) from the user's reflections over the past 5 days.
-    Covers their raw thoughts, mirror responses, and mood metaphors in a warm, letter format.
-    Second-person, observational only. No advice, no fixing, no diagnosis, no percentages or stats.
-    """
     system = """You're writing to someone about their past few days of thoughts. Not summarizing. Noticing.
 
 STRICT FORMAT:
@@ -961,11 +873,9 @@ Count your words. 100-150 only."""
 
     try:
         out = _chat(prompt, system=system).strip()
-        # Remove any accidental salutation
         lines = out.split('\n')
         if lines and lines[0].strip().lower().startswith(('dear', 'hi ', 'hello', 'hey')):
             out = '\n'.join(lines[1:]).strip()
-        # Check reasonable length (100-150 words is roughly 500-900 chars)
         if out and 200 < len(out) < 1200:
             return out
     except Exception as e:
@@ -973,29 +883,21 @@ Count your words. 100-150 only."""
     return INSIGHT_LETTER_FALLBACK
 
 
-# Backwards compatibility alias
 def get_weekly_insight_letter(reflections_summary: str) -> str:
-    """Alias for get_insight_letter for backwards compatibility."""
     return get_insight_letter(reflections_summary)
 
 
-# In-memory cache for mood-to-feeling conversions (avoids repeated LLM calls)
+# In-memory cache for mood-to-feeling conversions
 _mood_feeling_cache: dict[str, str] = {}
 
 
 def convert_moods_to_feelings(mood_metaphors: list[str]) -> list[dict]:
-    """
-    Convert a list of mood metaphors to human-relatable feelings.
-    Uses in-memory cache to avoid repeated LLM calls.
-    Returns list of { "original": str, "feeling": str }.
-    """
     if not mood_metaphors:
         return []
     unique_moods = list(dict.fromkeys([m.strip() for m in mood_metaphors if m.strip()]))[:12]
     if not unique_moods:
         return []
-    
-    # Check cache first - find which moods need LLM conversion
+
     result = []
     uncached_moods = []
     for mood in unique_moods:
@@ -1003,12 +905,10 @@ def convert_moods_to_feelings(mood_metaphors: list[str]) -> list[dict]:
             result.append({"original": mood, "feeling": _mood_feeling_cache[mood.lower()]})
         else:
             uncached_moods.append(mood)
-    
-    # If all moods are cached, return immediately
+
     if not uncached_moods:
         return result
-    
-    # Convert uncached moods via LLM
+
     system = """Convert mood metaphors to human-relatable feelings. The kind of words someone would actually use to describe how they feel to a friend.
 
 Return JSON array only.
@@ -1041,7 +941,7 @@ Examples of good conversions:
 
 Return JSON array only:
 [{{"original": "...", "feeling": "..."}}, ...]"""
-    
+
     try:
         raw = _chat(prompt, system=system).strip()
         if not raw:
@@ -1064,7 +964,6 @@ Return JSON array only:
                     if orig:
                         _mood_feeling_cache[orig.lower()] = feel
                         result.append({"original": orig, "feeling": feel})
-            # Handle any uncached moods that weren't in the LLM response
             for m in uncached_moods:
                 if m.lower() not in _mood_feeling_cache:
                     _mood_feeling_cache[m.lower()] = m
@@ -1075,32 +974,5 @@ Return JSON array only:
     return [{"original": m, "feeling": m} for m in unique_moods]
 
 
-# ============================================================================
-# Public API for Pattern Analyzer
-# ============================================================================
-
 def llm_chat(prompt: str, system: str | None = None) -> str:
-    """
-    Public chat function for use by pattern_analyzer.py and other modules.
-    Same as internal _chat but exposed for external use.
-    """
     return _chat(prompt, system)
-
-
-def _build_reflections_summary_simple(reflections: list[dict]) -> str:
-    """
-    Simple summary builder for shallow fallback analysis.
-    Used by pattern_analyzer.py when deep analysis fails.
-    """
-    parts = []
-    for r in reflections[:20]:
-        raw = (r.get("raw_text") or "").strip()
-        mirror = (r.get("mirror_response") or "").strip()
-        mood = (r.get("mood_word") or "").strip()
-        if raw:
-            parts.append(f"Thought: {raw[:400]}")
-        if mirror:
-            parts.append(f"Mirror: {mirror[:400]}")
-        if mood:
-            parts.append(f"Mood: {mood}")
-    return "\n\n".join(parts) if parts else ""

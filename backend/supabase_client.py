@@ -43,6 +43,136 @@ def get_supabase_status():
     return "ok"
 
 
+# ----- User usage (reflection rate limiting by plan) -----
+
+def get_user_usage(user_id: str) -> dict | None:
+    """Fetch user_usage row by user_id. Returns dict or None."""
+    if not user_id or not str(user_id).strip():
+        return None
+    client = _get_client()
+    if not client:
+        return None
+    try:
+        response = client.table("user_usage").select("*").eq("user_id", user_id.strip()).limit(1).execute()
+        if response.data and len(response.data) > 0:
+            return response.data[0]
+    except Exception as e:
+        logger.exception("Supabase get_user_usage failed: %s", e)
+    return None
+
+
+def ensure_user_usage_row(
+    user_id: str,
+    plan_type: str,
+    period_start: str,
+    trial_start: str | None = None,
+) -> dict | None:
+    """Insert user_usage row if missing; return row. Uses upsert on user_id."""
+    if not user_id or not str(user_id).strip():
+        return None
+    client = _get_client()
+    if not client:
+        return None
+    try:
+        from datetime import datetime, timezone
+        row = {
+            "user_id": user_id.strip(),
+            "plan_type": plan_type,
+            "period_start": period_start,
+            "reflections_used": 0,
+            "trial_total_used": 0,
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        }
+        if trial_start is not None:
+            row["trial_start"] = trial_start
+        response = client.table("user_usage").upsert(row, on_conflict="user_id").execute()
+        if response.data and len(response.data) > 0:
+            return response.data[0]
+    except Exception as e:
+        logger.exception("Supabase ensure_user_usage_row failed: %s", e)
+    return None
+
+
+def update_usage_period(
+    user_id: str,
+    period_start: str,
+    reflections_used: int = 0,
+    trial_total_used: int | None = None,
+) -> bool:
+    """Update period_start and reflections_used (and optionally trial_total_used) for period reset."""
+    if not user_id or not str(user_id).strip():
+        return False
+    client = _get_client()
+    if not client:
+        return False
+    try:
+        from datetime import datetime, timezone
+        payload = {
+            "period_start": period_start,
+            "reflections_used": reflections_used,
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        }
+        if trial_total_used is not None:
+            payload["trial_total_used"] = trial_total_used
+        client.table("user_usage").update(payload).eq("user_id", user_id.strip()).execute()
+        return True
+    except Exception as e:
+        logger.exception("Supabase update_usage_period failed: %s", e)
+        return False
+
+
+def increment_usage_atomic(
+    user_id: str,
+    plan_type: str,
+    limit_per_period: int,
+    trial_total_limit: int = 14,
+    trial_per_day_limit: int = 2,
+) -> dict | None:
+    """
+    Call RPC increment_reflection_usage. Returns updated row if increment succeeded, None if limit reached or error.
+    Atomic: limit check and increment in one DB operation.
+    """
+    if not user_id or not str(user_id).strip():
+        return None
+    client = _get_client()
+    if not client:
+        return None
+    try:
+        response = client.rpc(
+            "increment_reflection_usage",
+            {
+                "p_user_id": user_id.strip(),
+                "p_plan_type": plan_type,
+                "p_limit_per_period": limit_per_period,
+                "p_trial_total_limit": trial_total_limit,
+                "p_trial_per_day_limit": trial_per_day_limit,
+            },
+        ).execute()
+        if response.data and len(response.data) > 0:
+            return response.data[0]
+    except Exception as e:
+        logger.exception("Supabase increment_reflection_usage RPC failed: %s", e)
+    return None
+
+
+def decrement_usage_atomic(user_id: str, plan_type: str) -> bool:
+    """Call RPC decrement_reflection_usage (rollback when LLM fails after increment). Returns True if a row was updated."""
+    if not user_id or not str(user_id).strip():
+        return False
+    client = _get_client()
+    if not client:
+        return False
+    try:
+        response = client.rpc(
+            "decrement_reflection_usage",
+            {"p_user_id": user_id.strip(), "p_plan_type": plan_type},
+        ).execute()
+        return bool(response.data and len(response.data) > 0)
+    except Exception as e:
+        logger.exception("Supabase decrement_reflection_usage RPC failed: %s", e)
+    return False
+
+
 def insert_reflection_pattern(
     emotional_tone: str | None,
     themes: list[str],
@@ -117,6 +247,20 @@ def insert_revisit_reminder(
             return response.data[0].get("id")
     except Exception as e:
         logger.exception("Supabase insert_revisit_reminder failed: %s", e)
+    return None
+
+
+def get_reminder_by_id(reminder_id: str) -> dict | None:
+    """Fetch one reminder by id. Returns dict with id, reflection_id, remind_at, message or None."""
+    client = _get_client()
+    if not client:
+        return None
+    try:
+        response = client.table("revisit_reminders").select("id, reflection_id, remind_at, message").eq("id", reminder_id).limit(1).execute()
+        if response.data and len(response.data) > 0:
+            return response.data[0]
+    except Exception as e:
+        logger.exception("Supabase get_reminder_by_id failed: %s", e)
     return None
 
 
@@ -249,6 +393,23 @@ def update_reflection(
         return True
     except Exception as e:
         logger.exception("Supabase update_reflection failed: %s", e)
+        return False
+
+
+def update_reflection_closing(reflection_id: str, closing_text: str) -> bool:
+    """
+    Update a reflection with closing text. Returns True if updated.
+    """
+    client = _get_client()
+    if not client:
+        return False
+    try:
+        client.table("reflections").update({
+            "closing_text": closing_text,
+        }).eq("id", reflection_id).execute()
+        return True
+    except Exception as e:
+        logger.exception("Supabase update_reflection_closing failed: %s", e)
         return False
 
 
@@ -554,6 +715,110 @@ def sync_profile_from_auth(user_id: str) -> dict | None:
     return upsert_profile(user_id, email=email, display_name=display_name)
 
 
+def _delete_auth_user(user_id: str) -> bool:
+    """
+    Delete the user from Supabase Auth (Admin API). After this they cannot log in again.
+    Returns True if delete succeeded or user not found; False on error.
+    """
+    if not user_id or not str(user_id).strip():
+        return False
+    url = (SUPABASE_URL or "").rstrip("/")
+    if not url or not SUPABASE_SERVICE_KEY or not httpx:
+        return False
+    auth_url = f"{url}/auth/v1/admin/users/{user_id.strip()}"
+    try:
+        with httpx.Client(timeout=10.0) as client:
+            r = client.delete(
+                auth_url,
+                headers={
+                    "Authorization": f"Bearer {SUPABASE_SERVICE_KEY}",
+                    "apikey": SUPABASE_SERVICE_KEY,
+                },
+            )
+            if r.status_code in (200, 204, 404):
+                return True
+            logger.warning("Auth admin delete user %s: %s %s", user_id, r.status_code, r.text)
+    except Exception as e:
+        logger.warning("Supabase Auth admin delete user failed: %s", e)
+    return False
+
+
+def delete_user_data(user_id: str, delete_auth_user: bool = True) -> bool:
+    """
+    Delete all data for this user (GDPR-style account deletion).
+    Removes: mood_checkins (via reflections), revisit_reminders, reflections,
+    reflection_patterns (for those reflections), saved_reflections, weekly_insights,
+    user_personalization_context, profiles. Optionally deletes the auth user so they cannot log in again.
+    Returns True if all steps completed without critical failure.
+    """
+    if not user_id or not str(user_id).strip():
+        return False
+    client = _get_client()
+    if not client:
+        return False
+    uid = user_id.strip()
+    try:
+        # 1. Get all reflection ids (and pattern_ids) for this user
+        reflections = list_reflections_by_user(uid, limit=50000)
+        reflection_ids = [r["id"] for r in reflections if r.get("id")]
+        pattern_ids = [r["pattern_id"] for r in reflections if r.get("pattern_id")]
+
+        # 2. Delete child rows that reference reflections
+        if reflection_ids:
+            try:
+                client.table("mood_checkins").delete().in_("reflection_id", reflection_ids).execute()
+            except Exception as e:
+                logger.warning("delete_user_data mood_checkins: %s", e)
+            try:
+                client.table("revisit_reminders").delete().in_("reflection_id", reflection_ids).execute()
+            except Exception as e:
+                logger.warning("delete_user_data revisit_reminders: %s", e)
+
+        # 3. Delete reflections
+        try:
+            client.table("reflections").delete().eq("user_id", uid).execute()
+        except Exception as e:
+            logger.exception("delete_user_data reflections: %s", e)
+            return False
+
+        # 4. Delete orphaned reflection_patterns (optional but keeps DB clean)
+        if pattern_ids:
+            try:
+                client.table("reflection_patterns").delete().in_("id", pattern_ids).execute()
+            except Exception as e:
+                logger.warning("delete_user_data reflection_patterns: %s", e)
+
+        # 5. Saved reflections (user_identifier == user_id)
+        try:
+            client.table("saved_reflections").delete().eq("user_identifier", uid).execute()
+        except Exception as e:
+            logger.warning("delete_user_data saved_reflections: %s", e)
+
+        # 6. Weekly insights, personalization, profile
+        for table, col in [
+            ("weekly_insights", "user_id"),
+            ("user_personalization_context", "user_id"),
+            ("profiles", "user_id"),
+        ]:
+            try:
+                client.table(table).delete().eq(col, uid).execute()
+            except Exception as e:
+                logger.warning("delete_user_data %s: %s", table, e)
+
+        # 7. User usage (rate limit counters)
+        try:
+            client.table("user_usage").delete().eq("user_id", uid).execute()
+        except Exception as e:
+            logger.warning("delete_user_data user_usage: %s", e)
+
+        if delete_auth_user:
+            _delete_auth_user(uid)
+        return True
+    except Exception as e:
+        logger.exception("delete_user_data failed: %s", e)
+        return False
+
+
 # ----- Personalization context (for emails only; no raw thoughts) -----
 
 def get_personalization_context(user_id: str) -> dict | None:
@@ -599,6 +864,10 @@ def upsert_personalization_context(
     last_reflection_at: str | None = None,
     reflection_count_7d: int | None = None,
     name_from_email: str | None = None,
+    theme_history: list | None = None,
+    reflection_count_total: int | None = None,
+    last_emotional_tone: str | None = None,
+    last_mood_at: str | None = None,
 ) -> dict | None:
     """
     Insert or update personalization context. Only derived/summary data – no raw thoughts.
@@ -624,6 +893,14 @@ def upsert_personalization_context(
             row["reflection_count_7d"] = int(reflection_count_7d) if reflection_count_7d is not None else 0
         if name_from_email is not None:
             row["name_from_email"] = (str(name_from_email) or "").strip() or None
+        if theme_history is not None:
+            row["theme_history"] = theme_history if isinstance(theme_history, list) else []
+        if reflection_count_total is not None:
+            row["reflection_count_total"] = int(reflection_count_total)
+        if last_emotional_tone is not None:
+            row["last_emotional_tone"] = (str(last_emotional_tone) or "").strip() or None
+        if last_mood_at is not None:
+            row["last_mood_at"] = (str(last_mood_at) or "").strip() or None
         response = client.table("user_personalization_context").upsert(row, on_conflict="user_id").execute()
         if response.data and len(response.data) > 0:
             return response.data[0]
@@ -710,6 +987,34 @@ def refresh_personalization_context_for_user(user_id: str) -> dict | None:
     if profile and profile.get("email"):
         name_from_email = _name_from_email(profile.get("email"))
 
+    # Fetch existing theme_history for rolling update; total count = actual saved count
+    client = _get_client()
+    existing_data = {}
+    if client:
+        try:
+            existing = client.table("user_personalization_context").select("theme_history").eq("user_id", uid).limit(1).execute()
+            if existing.data:
+                existing_data = existing.data[0]
+        except Exception as e:
+            logger.warning("Supabase fetch existing personalization failed: %s", e)
+
+    theme_history = existing_data.get("theme_history") or []
+    if not isinstance(theme_history, list):
+        theme_history = []
+    # Total reflection count = lifetime saved reflections (so cron and post-save stay correct)
+    reflection_count_total = len(saved_all)
+
+    # Append snapshot for this refresh (rolling window of 8)
+    if recurring_themes:
+        from datetime import datetime, timezone
+        snapshot = {
+            "date": datetime.now(timezone.utc).isoformat(),
+            "themes": recurring_themes,
+            "emotional_tone": emotional_tone_summary or "",
+            "mood_words": recent_mood_words,
+        }
+        theme_history = (theme_history + [snapshot])[-8:]
+
     return upsert_personalization_context(
         user_id=uid,
         recurring_themes=recurring_themes,
@@ -718,6 +1023,8 @@ def refresh_personalization_context_for_user(user_id: str) -> dict | None:
         last_reflection_at=last_reflection_at,
         reflection_count_7d=reflection_count_7d,
         name_from_email=name_from_email,
+        theme_history=theme_history,
+        reflection_count_total=reflection_count_total,
     )
 
 

@@ -30,7 +30,7 @@ The backend is a **Python FastAPI** app in `backend/`. It does not run on Vercel
 
 Set the same variables you have in `backend/.env`:
 
-- `LLM_PROVIDER`, `OPENROUTER_API_KEY`, `OPENROUTER_MODEL`
+- `LLM_PROVIDER`, and either OpenAI vars (`OPENAI_API_KEY`, `OPENAI_MODEL`) or Ollama vars
 - `SUPABASE_URL`, `SUPABASE_SERVICE_KEY`, `SUPABASE_JWT_SECRET`
 - (Optional) `OLLAMA_*` if you use Ollama
 

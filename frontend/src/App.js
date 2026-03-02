@@ -13,10 +13,12 @@ import SettingsPanel from "./components/SettingsPanel";
 import { Toaster, toast } from "sonner";
 import { requestNotificationPermission, scheduleRevisitNotification, setOpenReflectionHandler } from "./lib/notifications";
 import { useAuth } from "./contexts/AuthContext";
+import { useRevenueCat } from "./contexts/RevenueCatContext";
 import { getAuthHeaders, getProfile, getReflectedToday } from "./lib/api";
 import { getOrCreateUserIdentifier } from "./lib/userId";
 import { getReflectionMode } from "./lib/reflectionMode";
 import AuthScreen from "./components/AuthScreen";
+import PaywallLimitModal from "./components/PaywallLimitModal";
 import { BookOpen, Settings } from "lucide-react";
 import { supabase } from "./lib/supabase";
 import { getBackendUrl } from "./lib/config";
@@ -39,6 +41,7 @@ const STATES = {
 
 function App() {
   const { user, session, loading } = useAuth();
+  const { isSupported: isRevenueCatSupported, presentPaywall, presentPaywallIfNeeded, isPremium } = useRevenueCat();
   const [appState, setAppState] = useState(STATES.ONBOARDING);
   const [thought, setThought] = useState('');
   const [reflection, setReflection] = useState(null);
@@ -54,6 +57,9 @@ function App() {
   const [revisitBannerHidden, setRevisitBannerHidden] = useState(false);
   const [showSignInModal, setShowSignInModal] = useState(false);
   const [pendingSaveAfterSignIn, setPendingSaveAfterSignIn] = useState(null);
+  const [closingText, setClosingText] = useState(null);
+  const [isReflectSubmitting, setIsReflectSubmitting] = useState(false);
+  const [showPaywallLimitModal, setShowPaywallLimitModal] = useState(false);
   const revisitBannerTimeoutRef = useRef(null);
   const dailyNudgeShownThisSession = useRef(false);
   const openReflectionRef = useRef((id) => {
@@ -64,6 +70,32 @@ function App() {
 
   const authRequired = !!supabase;
   const userId = user?.id ?? getOrCreateUserIdentifier();
+  const prevUserRef = useRef(user);
+
+  // Clear all reflection, mirror, mood, and personalization state on logout so no previous session data remains visible.
+  useEffect(() => {
+    const prevUser = prevUserRef.current;
+    prevUserRef.current = user;
+    if (prevUser == null || user != null) return;
+    setThought("");
+    setReflection(null);
+    setViewingReflectionId(null);
+    setViewingSavedId(null);
+    setRevisitLaterIds([]);
+    setDueReminders([]);
+    setHistoryAll([]);
+    setClosingText(null);
+    setPendingSaveAfterSignIn(null);
+    setAppState(STATES.INPUT);
+    setHistoryDropdownOpen(false);
+    setInsightsPanelOpen(false);
+    setSettingsPanelOpen(false);
+    setShowSignInModal(false);
+    try {
+      localStorage.removeItem(REVISIT_LATER_KEY);
+    } catch (_) {}
+    if (dailyNudgeShownThisSession.current) dailyNudgeShownThisSession.current = false;
+  }, [user]);
 
   useEffect(() => {
     openReflectionRef.current = (id) => {
@@ -174,11 +206,16 @@ function App() {
 
   const handleOnboardingComplete = () => {
     setAppState(STATES.INPUT);
+    if (isRevenueCatSupported && !isPremium) {
+      setTimeout(() => presentPaywallIfNeeded().catch(() => {}), 1200);
+    }
   };
 
   const handleSubmit = async () => {
     if (!thought.trim()) return;
+    if (isReflectSubmitting) return;
 
+    setIsReflectSubmitting(true);
     setAppState(STATES.LOADING);
 
     try {
@@ -192,15 +229,26 @@ function App() {
       setAppState(STATES.REFLECTION);
     } catch (error) {
       console.error("Reflection error:", error);
-      const status = error.response?.status;
-      const detail = error.response?.data?.detail;
-      let msg = "Could not get reflection.";
-      if (status === 404) msg = "Backend route not found (404). Start the REFLECT backend: cd backend && uvicorn server:app --reload";
-      else if (typeof detail === "string") msg = detail;
-      else if (Array.isArray(detail) && detail[0]?.msg) msg = detail[0].msg;
-      else if (error.code === "ERR_NETWORK" || error.message?.includes("Network")) msg = "Cannot reach the server. Is the backend running at " + BACKEND_URL + "?";
-      toast.error(msg);
+      const isLimitReached = error.response?.status === 429
+        && (error.response?.data?.error === "Reflection limit reached" || error.response?.data?.detail === "Reflection limit reached");
+      if (isLimitReached) {
+        if (isRevenueCatSupported) {
+          try {
+            await presentPaywall();
+          } catch (_) {
+            setShowPaywallLimitModal(true);
+          }
+          toast("Upgrade to Premium for more reflections.");
+        } else {
+          setShowPaywallLimitModal(true);
+          toast("Reflection limit reached. Upgrade in Settings.");
+        }
+      } else {
+        toast.error("We couldn't load your reflection. Try again.");
+      }
       setAppState(STATES.INPUT);
+    } finally {
+      setIsReflectSubmitting(false);
     }
   };
 
@@ -215,6 +263,7 @@ function App() {
       return response.data.content;
     } catch (error) {
       console.error("Personalized mirror error:", error);
+      toast.error("We couldn't load your reflection. Try again.");
       return null;
     }
   };
@@ -229,6 +278,29 @@ function App() {
     } catch (error) {
       console.error("Mood suggestions error:", error);
       return [];
+    }
+  };
+
+  const handleGetClosing = async (moodWord, answers, personalizedMirror) => {
+    try {
+      const response = await axios.post(`${API}/closing`, {
+        thought: thought.trim(),
+        answers: Array.isArray(answers) ? answers.map(a => a.response || a) : answers,
+        mirror_response: personalizedMirror || "",
+        mood_word: moodWord || null,
+        ...(reflection?.id && { reflection_id: reflection.id }),
+        reflection_mode: getReflectionMode(),
+      }, { headers: getAuthHeaders() });
+      
+      const closing = response.data.closing_text;
+      setClosingText(closing);
+      return closing;
+    } catch (error) {
+      console.error("Closing generation error:", error);
+      toast.error("We couldn't load your reflection. Try again.");
+      const fallback = "You showed up today. That matters. Between now and next time — notice what you're already carrying. It's worth your attention.";
+      setClosingText(fallback);
+      return fallback;
     }
   };
 
@@ -429,9 +501,35 @@ function App() {
     );
   }
 
+  if (authRequired && !user) {
+    return (
+      <div className="min-h-screen bg-[#FFFDF7]" data-testid="app-container">
+        <Toaster position="top-center" richColors />
+        <AuthScreen />
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen bg-[#FFFDF7]" data-testid="app-container">
       <Toaster position="top-center" richColors />
+
+      {/* Paywall limit modal: when user hits 429 (reflection limit) — native paywall or this fallback */}
+      <AnimatePresence>
+        {showPaywallLimitModal && (
+          <PaywallLimitModal
+            onDismiss={() => setShowPaywallLimitModal(false)}
+            onUpgrade={() => {
+              setShowPaywallLimitModal(false);
+              if (isRevenueCatSupported) {
+                presentPaywall().catch(() => {});
+              } else {
+                setSettingsPanelOpen(true);
+              }
+            }}
+          />
+        )}
+      </AnimatePresence>
 
       {/* Sign-in modal: shown at end of first reflection when user tries to save */}
       {showSignInModal && (
@@ -641,6 +739,7 @@ function App() {
               thought={thought}
               setThought={setThought}
               onSubmit={handleSubmit}
+              isSubmitting={isReflectSubmitting}
             />
           )}
 
@@ -658,6 +757,7 @@ function App() {
               onFetchMoodSuggestions={handleFetchMoodSuggestions}
               onMoodSubmit={handleMoodSubmit}
               onSaveHistory={handleSaveHistory}
+              onGetClosing={handleGetClosing}
               onComeBackLater={handleComeBackLater}
               onSetReminder={handleSetReminder}
               onReflectAnother={handleReflectAnother}
@@ -670,6 +770,11 @@ function App() {
       <footer className="fixed bottom-0 left-0 right-0 py-4 px-6 text-center bg-gradient-to-t from-[#FFFDF7] to-transparent">
         <p className="text-xs text-[#A0AEC0] tracking-wide" data-testid="footer-disclaimer">
           This is a reflection space, not therapy. If you're in crisis, please reach out to a mental health professional.
+        </p>
+        <p className="text-xs text-[#A0AEC0] mt-2">
+          <a href="/privacy.html" target="_blank" rel="noopener noreferrer" className="hover:text-[#FFB4A9] transition-colors">Privacy Policy</a>
+          <span className="mx-2">·</span>
+          <a href="/terms.html" target="_blank" rel="noopener noreferrer" className="hover:text-[#FFB4A9] transition-colors">Terms of Service</a>
         </p>
       </footer>
     </div>

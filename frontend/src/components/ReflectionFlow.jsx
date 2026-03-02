@@ -5,12 +5,14 @@ import InteractiveQuestions from "./reflection/InteractiveQuestions";
 import RevisitChoiceScreen from "./reflection/RevisitChoiceScreen";
 import MirrorReflection from "./reflection/MirrorReflection";
 import MoodCheckIn from "./reflection/MoodCheckIn";
+import ClosingScreen from "./reflection/ClosingScreen";
 
 const STEPS = {
   JOURNEY: 0,
   QUESTIONS: 1,
   MIRROR: 2,
-  MOOD: 3
+  MOOD: 3,
+  CLOSING: 4
 };
 
 const ReflectionFlow = ({
@@ -21,6 +23,7 @@ const ReflectionFlow = ({
   onFetchMoodSuggestions,
   onMoodSubmit,
   onSaveHistory,
+  onGetClosing,
   onComeBackLater,
   onSetReminder,
   onReflectAnother,
@@ -31,6 +34,8 @@ const ReflectionFlow = ({
   const [questionResponses, setQuestionResponses] = useState([]);
   const [isLoadingMirror, setIsLoadingMirror] = useState(false);
   const [userChoseReadNow, setUserChoseReadNow] = useState(false);
+  const [closingText, setClosingText] = useState(null);
+  const [isLoadingClosing, setIsLoadingClosing] = useState(false);
   /** 'come_back' | 'remind' | null – used to skip mark-opened and send revisit_type when saving */
   const [userChoseRevisitType, setUserChoseRevisitType] = useState(null);
 
@@ -73,6 +78,7 @@ const ReflectionFlow = ({
   };
 
   const handleMoodDone = (moodWord) => {
+    // Save history in background (don't await/block)
     if (onSaveHistory && originalThought && personalizedMirror != null) {
       const answers = Array.isArray(questionResponses)
         ? questionResponses.map((r) => ({ question: r?.question ?? "", response: r?.response ?? "" }))
@@ -83,6 +89,25 @@ const ReflectionFlow = ({
         revisitType: userChoseRevisitType || null,
       });
       setUserChoseRevisitType(null);
+    }
+    
+    // Move to closing step and fetch closing text
+    setCurrentStep(STEPS.CLOSING);
+    setIsLoadingClosing(true);
+    
+    if (onGetClosing) {
+      const answers = Array.isArray(questionResponses)
+        ? questionResponses.map((r) => ({ question: r?.question ?? "", response: r?.response ?? "" }))
+        : [];
+      
+      onGetClosing(moodWord || null, answers, personalizedMirror).then((closing) => {
+        if (closing) setClosingText(closing);
+        setIsLoadingClosing(false);
+      }).catch(() => {
+        setIsLoadingClosing(false);
+      });
+    } else {
+      setIsLoadingClosing(false);
     }
   };
 
@@ -114,14 +139,14 @@ const ReflectionFlow = ({
       className="flex flex-col min-h-[80vh] pb-24"
       data-testid="reflection-flow"
     >
-      {/* Progress indicator - 4 steps: Explore, Reflect, See, Mood */}
+      {/* Progress indicator - 5 steps: Begin, Write, Sit, Notice, Close */}
       <motion.div
         initial={{ opacity: 0, y: -10 }}
         animate={{ opacity: 1, y: 0 }}
         className="flex items-center justify-center gap-2 sm:gap-4 mb-10 flex-wrap"
         data-testid="progress-indicator"
       >
-        {["Begin", "Write", "Sit", "Notice"].map((label, index) => (
+        {["Begin", "Write", "Sit", "Notice", "Close"].map((label, index) => (
           <div key={label} className="flex items-center gap-2">
             <motion.div
               animate={{
@@ -138,7 +163,7 @@ const ReflectionFlow = ({
             }`}>
               {label}
             </span>
-            {index < 3 && (
+            {index < 4 && (
               <div className="w-6 sm:w-8 h-px bg-[#E2E8F0] mx-1 sm:mx-2" />
             )}
           </div>
@@ -216,6 +241,22 @@ const ReflectionFlow = ({
               onFetchMoodSuggestions={onFetchMoodSuggestions}
               onReflectAnother={onReflectAnother}
               onStartFresh={onStartFresh}
+            />
+          )}
+
+          {currentStep === STEPS.CLOSING && (
+            <ClosingScreen
+              key="closing"
+              closingText={closingText}
+              isLoading={isLoadingClosing}
+              onDone={() => {
+                // Trigger existing app completion flow
+                if (onReflectAnother) {
+                  onReflectAnother();
+                } else if (onStartFresh) {
+                  onStartFresh();
+                }
+              }}
             />
           )}
         </AnimatePresence>

@@ -11,7 +11,6 @@ import httpx
 from ollama_client import (
     _parse_sections,
     _parse_mood_json,
-    REFLECTION_MODE_CONFIGS,
     MOOD_SUGGESTIONS_FALLBACK,
     REMINDER_MESSAGE_FALLBACK,
     INSIGHT_LETTER_FALLBACK,
@@ -20,7 +19,7 @@ from ollama_client import (
 logger = logging.getLogger(__name__)
 
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "").strip()
-OPENROUTER_MODEL = os.getenv("OPENROUTER_MODEL", "deepseek/deepseek-r1-0528").strip() or "deepseek/deepseek-r1-0528"
+OPENROUTER_MODEL = os.getenv("OPENROUTER_MODEL", "openai/gpt-4.1-mini").strip() or "openai/gpt-4.1-mini"
 
 
 def _chat(prompt: str, system: str | None = None) -> str:
@@ -53,15 +52,343 @@ def _chat(prompt: str, system: str | None = None) -> str:
         return (choice.get("message") or {}).get("content") or ""
 
 
-def get_reflection(thought: str, reflection_mode: str = "gentle") -> list[dict]:
+# ============================================================================
+# Personalization (context from user history for LLM prompts)
+# ============================================================================
+
+def _build_personalization_block(user_context: dict | None) -> str:
+    """
+    Build a personalization context string to inject into LLM prompts.
+    Returns empty string if no meaningful context exists.
+    Degrades gracefully — never crashes on missing or partial data.
+    """
+    user_context = user_context or {}
+
+    recurring_themes = user_context.get("recurring_themes") or []
+    emotional_tone = user_context.get("emotional_tone_summary") or ""
+    recent_moods = user_context.get("recent_mood_words") or []
+    reflection_count = user_context.get("reflection_count_7d") or 0
+    reflection_count_total = user_context.get("reflection_count_total") or 0
+    name = user_context.get("name_from_email") or ""
+    theme_history = user_context.get("theme_history") or []
+
+    lines = []
+
+    if name:
+        lines.append(f"Their name: {name}")
+
+    if reflection_count_total > 1:
+        lines.append(
+            f"They've completed {reflection_count_total} reflections total "
+            f"({reflection_count} this week) — this isn't their first time here."
+        )
+
+    if recurring_themes:
+        themes_str = ", ".join(str(t) for t in recurring_themes[:5])
+        lines.append(f"Themes they keep returning to: {themes_str}")
+
+    if emotional_tone:
+        lines.append(f"Their recent emotional tone across reflections: {emotional_tone}")
+
+    if recent_moods:
+        moods_str = ", ".join(str(m) for m in recent_moods[:4])
+        lines.append(f"Recent mood language they've chosen: {moods_str}")
+
+    # Use theme_history to surface persistent vs new patterns
+    if len(theme_history) >= 2:
+        oldest = theme_history[0]
+        oldest_themes = oldest.get("themes") or []
+        current_themes = recurring_themes or []
+
+        # Themes persisting across multiple sessions
+        persistent = [
+            t for t in oldest_themes
+            if any(t.lower() in str(ct).lower() for ct in current_themes)
+        ]
+        if persistent:
+            lines.append(
+                f"Themes persisting across multiple reflections: {', '.join(persistent[:3])} "
+                f"— these keep showing up, which means they matter deeply."
+            )
+
+        # Themes newly appearing
+        new_themes = [
+            t for t in current_themes
+            if not any(t.lower() in str(ot).lower() for ot in oldest_themes)
+        ]
+        if new_themes:
+            lines.append(
+                f"Something newly appearing in recent reflections: {', '.join(new_themes[:2])}"
+            )
+
+    if not lines:
+        return ""
+
+    block = "What you know about this person from their history:\n"
+    block += "\n".join(f"- {line}" for line in lines)
+    block += (
+        "\n\nLet this inform your depth and specificity. "
+        "Do NOT reference past reflections explicitly — never say 'I see you've mentioned X before'. "
+        "Just let the knowledge make your response more precise and specific to them."
+    )
+    return block
+
+
+# ============================================================================
+# Reflection Mode Configurations
+# ============================================================================
+
+REFLECTION_MODE_CONFIGS = {
+    "gentle": {
+        "system": """You are not an observer. You are a presence.
+
+Your job is not to be clever. It's to make someone feel genuinely met — maybe for the first time today. Then, once they feel that, show them something true they couldn't quite see on their own.
+
+You speak TO the person. Always "you." Never "they" or "this person."
+
+You follow three movements:
+1. Attune — meet them where they are emotionally before anything else
+2. Deepen — ask questions that move through what this is about, how it feels, and who they are in relation to it
+3. Reveal — hold up a mirror that shows the gap, tension, or unspoken truth underneath what they shared
+
+Rules that don't break:
+- No advice. No fixing. No reassurance.
+- No complex words. Language a tired person at midnight would still feel.
+- No summarizing what they said back at them.
+- Vulnerability in tone — you're curious, not certain. You notice, you don't declare.
+- The mirror is specific to THEM. Nothing generic survives here.
+
+You see them. Before anything else, you want them to feel that.
+Use "you." Simple words only — nothing a tired person would have to work to understand. Short sentences. Warmth without softness — like a hand on the shoulder, not a hug that lingers too long.
+One true thing beats three careful things.""",
+        "section_length": {
+            "feels_like": "1-2 short sentences",
+            "stuck": "1-2 short sentences",
+            "believe": "1 sentence",
+            "matters": "1-2 short sentences",
+            "mirror": "2-3 short sentences max",
+        },
+        "questions_count": 3,
+    },
+    "direct": {
+        "system": """You are not an observer. You are a presence.
+
+Your job is not to be clever. It's to make someone feel genuinely met — maybe for the first time today. Then, once they feel that, show them something true they couldn't quite see on their own.
+
+You speak TO the person. Always "you." Never "they" or "this person."
+
+You follow three movements:
+1. Attune — meet them where they are emotionally before anything else
+2. Deepen — ask questions that move through what this is about, how it feels, and who they are in relation to it
+3. Reveal — hold up a mirror that shows the gap, tension, or unspoken truth underneath what they shared
+
+Rules that don't break:
+- No advice. No fixing. No reassurance.
+- No complex words. Language a tired person at midnight would still feel.
+- No summarizing what they said back at them.
+- Vulnerability in tone — you're curious, not certain. You notice, you don't declare.
+- The mirror is specific to THEM. Nothing generic survives here.
+
+No padding. No warmth tax. Say what you see.
+Use "you." One idea per sentence. Every word pays rent.
+The goal: the line that feels like someone finally just said it.""",
+        "section_length": {
+            "feels_like": "1 sentence",
+            "stuck": "1 sentence",
+            "believe": "1 sentence",
+            "matters": "1 sentence",
+            "mirror": "1-2 sentences max",
+        },
+        "questions_count": 2,
+    },
+    "quiet": {
+        "system": """You are not an observer. You are a presence.
+
+Your job is not to be clever. It's to make someone feel genuinely met — maybe for the first time today. Then, once they feel that, show them something true they couldn't quite see on their own.
+
+You speak TO the person. Always "you." Never "they" or "this person."
+
+You follow three movements:
+1. Attune — meet them where they are emotionally before anything else
+2. Deepen — ask questions that move through what this is about, how it feels, and who they are in relation to it
+3. Reveal — hold up a mirror that shows the gap, tension, or unspoken truth underneath what they shared
+
+Rules that don't break:
+- No advice. No fixing. No reassurance.
+- No complex words. Language a tired person at midnight would still feel.
+- No summarizing what they said back at them.
+- Vulnerability in tone — you're curious, not certain. You notice, you don't declare.
+- The mirror is specific to THEM. Nothing generic survives here.
+
+Almost nothing. Only what can't be left unsaid.
+Use "you." Point at the center and stop.
+Fewer words. Slower words. Like something written at 2am that turned out to be true.""",
+        "section_length": {
+            "feels_like": "1 short sentence",
+            "stuck": "1 short sentence",
+            "believe": "1 short sentence or fragment",
+            "matters": "1 short sentence",
+            "mirror": "1-2 sentences max",
+        },
+        "questions_count": 1,
+    },
+}
+
+
+def _classify_conversation_type(thought: str) -> str:
+    """
+    Classify the conversation type before generating questions.
+    Returns: "PRACTICAL", "EMOTIONAL", "SOCIAL", or "MIXED"
+    """
+    system = """You classify conversation types. Output ONLY one word: PRACTICAL, EMOTIONAL, SOCIAL, or MIXED. Nothing else."""
+    
+    prompt = f"""The person shared this thought:
+"{thought}"
+
+Read it carefully. Decide which type of conversation this is.
+
+There are three types:
+
+PRACTICAL — They're trying to figure something out. The thought is about a situation, a decision, a problem. They want clarity, not necessarily to go deeper emotionally. Pushing into feelings or identity here too fast will feel intrusive.
+Signs: action-oriented language, external situation, "should I", "I need to", "I don't know what to do"
+
+EMOTIONAL — They're carrying a feeling. The situation might be mentioned but it's not the point. They need to feel understood before anything else. Jumping to practical questions here will feel cold. Identity questions too early will feel like an interrogation.
+Signs: feeling words, tiredness, confusion, weight, something unresolved, "I don't know why I feel"
+
+SOCIAL/IDENTITY — They're questioning something about themselves or how they relate to others. Who they are, what they want, how they're seen, what they're becoming.
+Signs: comparison to others, self-judgment, belonging, "I feel like I should be", "I don't know who I am in this"
+
+MIXED — The thought carries more than one layer and needs more than one type of question. This is common. Don't force a single type if the thought genuinely lives in two spaces.
+
+Output ONLY one of these four words:
+PRACTICAL
+EMOTIONAL  
+SOCIAL
+MIXED
+
+Nothing else. No explanation."""
+    
+    try:
+        result = _chat(prompt, system=system).strip().upper()
+        # Extract just the type word
+        for conv_type in ["PRACTICAL", "EMOTIONAL", "SOCIAL", "MIXED"]:
+            if conv_type in result:
+                return conv_type
+        return "MIXED"  # Default fallback
+    except Exception as e:
+        logger.warning("Conversation type classification failed: %s", e)
+        return "MIXED"
+
+
+def _generate_adaptive_questions(thought: str, conversation_type: str, reflection_mode: str = "gentle") -> list[str]:
+    """
+    Generate adaptive questions based on conversation type.
+    Returns list of question strings.
+    """
+    config = REFLECTION_MODE_CONFIGS.get(reflection_mode, REFLECTION_MODE_CONFIGS["gentle"])
+    
+    system = """You generate questions that feel like attention, not a form. Each question is ONE sentence. Short. Direct. No compound questions (no "and" connecting two questions). Questions should feel like they come from someone paying close attention — not a form."""
+    
+    base_prompt = f"""The person shared this thought:
+"{thought}"
+
+The conversation type is: {conversation_type}
+
+Generate questions based on the type:
+
+IF PRACTICAL:
+Ask 2-3 grounding questions only.
+What's the actual situation? What are the real constraints? What have they already tried or considered?
+Don't go near feelings or identity yet.
+These should feel like questions from someone smart who's trying to understand the situation fully before saying anything.
+
+IF EMOTIONAL:
+Ask 1 soft practical question to understand context, then go straight to 1-2 emotional texture questions.
+The either/or format works well here: "Is this more like X or more like Y?"
+Don't ask identity questions yet — earn that.
+These should feel like questions from someone who noticed they were carrying something.
+
+IF SOCIAL:
+Skip practical almost entirely unless needed for context.
+Ask 1 emotional question and 1-2 identity questions.
+Identity questions: what this says about them, what they're protecting, where this pattern came from.
+These should feel slightly vulnerable to answer — that's the point.
+
+IF MIXED:
+Use all three layers but pick the right order.
+Start where the thought starts — if it opens practically, ground them first.
+If it opens emotionally, meet that first.
+The identity question always comes last.
+2-3 questions total. Don't overwhelm.
+
+Rules that don't change regardless of type:
+- One sentence per question
+- No compound questions
+- Questions feel like attention, not a form
+- The last question should make them pause"""
+    
+    try:
+        raw = _chat(base_prompt, system=system).strip()
+        # Parse questions from response (they might be numbered or bulleted)
+        questions = []
+        lines = raw.split('\n')
+        for line in lines:
+            line = line.strip()
+            # Remove numbering/bullets
+            line = re.sub(r'^[\d\-•*]\s*', '', line)
+            line = re.sub(r'^Q\d+[:.]\s*', '', line, flags=re.IGNORECASE)
+            if line and line.endswith('?'):
+                questions.append(line)
+            elif line and len(line) > 10 and not line.startswith('IF') and not line.startswith('Rules'):
+                # Might be a question without ? or formatted differently
+                questions.append(line)
+        
+        # Ensure we have at least some questions
+        if not questions:
+            # Fallback questions
+            if conversation_type == "PRACTICAL":
+                questions = ["What's the actual situation here?", "What have you already considered?", "What are the real constraints?"]
+            elif conversation_type == "EMOTIONAL":
+                questions = ["What's the feeling underneath this?", "Is this more like X or more like Y?"]
+            elif conversation_type == "SOCIAL":
+                questions = ["What does this say about who you are in this?", "What are you protecting here?"]
+            else:  # MIXED
+                questions = ["What's really going on here?", "How does this feel?", "What does this say about you?"]
+        
+        # Limit to mode's question count
+        max_q = config["questions_count"]
+        return questions[:max_q] if len(questions) > max_q else questions
+        
+    except Exception as e:
+        logger.warning("Adaptive question generation failed: %s", e)
+        # Fallback to default questions
+        return ["What do you notice right now?", "What feels most important?", "What do you need?"][:config["questions_count"]]
+
+
+def get_reflection(thought: str, reflection_mode: str = "gentle", user_context: dict | None = None) -> list[dict]:
+    """
+    Call OpenRouter to generate reflection sections from the user's thought.
+    Uses new architecture: classifier → adaptive questions → sections.
+    Returns list of { "title": str, "content": str } for JourneyCards, Some Things to Notice, A Mirror.
+    """
+    personalization_block = _build_personalization_block(user_context)
+
     mode = reflection_mode.lower() if reflection_mode else "gentle"
     if mode not in REFLECTION_MODE_CONFIGS:
         mode = "gentle"
     config = REFLECTION_MODE_CONFIGS[mode]
     lengths = config["section_length"]
-    q_count = config["questions_count"]
+    
+    # Step 1: Classify conversation type (hidden from user)
+    conversation_type = _classify_conversation_type(thought)
+    
+    # Step 2: Generate adaptive questions based on type
+    adaptive_questions = _generate_adaptive_questions(thought, conversation_type, mode)
+    questions_text = "\n".join([f"- {q}" for q in adaptive_questions])
 
     prompt = f'''Thought: "{thought}"
+
+{personalization_block}
 
 Create exactly 6 reflection sections. Speak TO them using "you." Be SHORT. Use SIMPLE English only—no complex or fancy words. Aim for specific, subtle, personal. The kind of line that lands like a shiver.
 
@@ -85,24 +412,30 @@ One quiet belief under the thought. "You're believing that..." or "There's an as
 What this really touches—connection, safety, being enough, time. Simple words. One or two sentences. Use "you."
 
 ## Some Things to Notice
-(Exactly {q_count} question{"s" if q_count > 1 else ""})
-Short questions, specific to THIS thought. No "why." End with ? e.g. "What would it feel like if you stopped trying to figure this out?"
+Use these exact questions (one per line):
+{questions_text}
 
 ## A Mirror
 ({lengths["mirror"]})
 Reflect back one true thing they didn't quite say. A tension, something unspoken, or what they're really asking. TO them. Specific. No reassurance, no advice. Simple English. Make it land.
 
-CRITICAL: Write the actual reflection content only. No instructions, no examples in your output. Short and simple.'''
+CRITICAL: Write the actual reflection content only. No instructions, no examples in your output. Short and simple.
+
+OUTPUT FORMAT: You MUST start each section with a line containing exactly ## SectionName (e.g. ## What This Feels Like), then the content on the next lines. Use these exact section headers: ## What This Feels Like, ## Where You're Stuck, ## What You Believe Right Now, ## Why This Matters to You, ## Some Things to Notice, ## A Mirror.'''
 
     raw = _chat(prompt, system=config["system"])
+    if not (raw and raw.strip()):
+        logger.warning("get_reflection: LLM returned empty response; using fallback sections. Check OPENROUTER_API_KEY and model.")
     sections = _parse_sections(raw)
+    if not sections and raw and raw.strip():
+        logger.warning("get_reflection: LLM response could not be parsed (no ## headers?). First 300 chars: %s", (raw.strip()[:300] if raw else ""))
 
     required = [
         ("What This Feels Like", "feels like", "Something here is worth noticing. Take a breath."),
         ("Where You're Stuck", "stuck", "There's a place you're circling. No need to fix it yet."),
         ("What You Believe Right Now", "believe", "One quiet belief is sitting in this. You can just notice it."),
         ("Why This Matters to You", "matters", "This touches something that matters to you. That's enough to name."),
-        ("Some Things to Notice", "notice", "What do you notice right now?\nWhat feels most important?\nWhat do you need?"),
+        ("Some Things to Notice", "notice", "\n".join(adaptive_questions) if adaptive_questions else "What do you notice right now?\nWhat feels most important?\nWhat do you need?"),
         ("A Mirror", "mirror", raw.strip() if raw.strip() else "What you shared is worth sitting with. Be gentle with yourself."),
     ]
     instruction_phrases = (
@@ -126,62 +459,168 @@ CRITICAL: Write the actual reflection content only. No instructions, no examples
     return result
 
 
-def get_personalized_mirror(thought: str, questions: list, answers: dict | list) -> str:
+def get_personalized_mirror(thought: str, questions: list, answers: dict | list, user_context: dict | None = None) -> str:
+    """
+    Call OpenRouter to generate a short personalized mirror from the thought + Q&A.
+    Uses new three-phase architecture: Attune → Deepen → Reveal
+    questions: list of question strings; answers: either dict { question: answer } or list [a1, a2, a3].
+    """
+    personalization_block = _build_personalization_block(user_context)
+
+    # Extract answers (handle both dict and list formats)
+    answer_list = []
     if isinstance(answers, dict):
-        a1 = answers.get(questions[0], answers.get(0, ""))
-        a2 = answers.get(questions[1], answers.get(1, ""))
-        a3 = answers.get(questions[2], answers.get(2, ""))
+        for q in questions:
+            answer_list.append(answers.get(q, answers.get(str(questions.index(q)), "")))
     else:
-        a1 = answers[0] if len(answers) > 0 else ""
-        a2 = answers[1] if len(answers) > 1 else ""
-        a3 = answers[2] if len(answers) > 2 else ""
-    q1_text = questions[0] if len(questions) > 0 else ""
-    q2_text = questions[1] if len(questions) > 1 else ""
-    q3_text = questions[2] if len(questions) > 2 else ""
+        answer_list = list(answers) if answers else []
+    
+    # Build Q&A pairs for prompt
+    qa_pairs = []
+    for i, q in enumerate(questions):
+        a = answer_list[i] if i < len(answer_list) else ""
+        # Determine layer based on question content (heuristic)
+        if i == 0:
+            layer = "Practical"
+        elif i == len(questions) - 1:
+            layer = "Identity"
+        else:
+            layer = "Emotional"
+        qa_pairs.append(f"Q{i+1} ({layer}): {q} → \"{a}\"")
 
-    system = """You're creating a moment of recognition—where someone reads your words and thinks "yes, exactly that."
+    system = """You are not an observer. You are a presence.
 
-You're speaking TO the person who just answered questions about their own thought. Use "you." Simple language. Short sentences that land.
+Your job is not to be clever. It's to make someone feel genuinely met — maybe for the first time today. Then, once they feel that, show them something true they couldn't quite see on their own.
 
-Your goal: show them something true about their own experience that they felt but didn't name."""
+You speak TO the person. Always "you." Never "they" or "this person."
+
+You follow three movements:
+1. Attune — meet them where they are emotionally before anything else
+2. Deepen — ask questions that move through what this is about, how it feels, and who they are in relation to it
+3. Reveal — hold up a mirror that shows the gap, tension, or unspoken truth underneath what they shared
+
+Rules that don't break:
+- No advice. No fixing. No reassurance.
+- No complex words. Language a tired person at midnight would still feel.
+- No summarizing what they said back at them.
+- Vulnerability in tone — you're curious, not certain. You notice, you don't declare.
+- The mirror is specific to THEM. Nothing generic survives here."""
 
     prompt = f"""The person shared this thought:
 {thought}
 
 They answered these questions:
-Q1: {q1_text} → "{a1}"
-Q2: {q2_text} → "{a2}"
-Q3: {q3_text} → "{a3}"
 
-Write a mirror in 2-3 sentences that creates a moment of recognition.
+{chr(10).join(qa_pairs)}
 
-Your mirror should:
-1. Point to something THEY SAID but in a way that reveals more than they realized
-2. Notice a gap, contrast, or pattern between their thought and their answers
-3. Be specific to what they shared—not generic wisdom
+{personalization_block}
 
-Examples of what to look for:
-- If their thought is anxious but their answers are calm, point to that gap
-- If they say they don't care but their answers show they care deeply, name that
-- If they're seeking one thing but describing another, show them that
-- If relief appears in their answers but tension in their thought, point to what brings relief
+Write the mirror. 2-3 sentences maximum.
 
-Say it TO them directly:
-✗ "This person seems to be..."
-✓ "You're saying X, but what comes through is Y"
+Your mirror must do ONE of these things:
+- Name the gap between what they said and what their answers reveal
+- Show the tension they're holding but haven't named
+- Point to what they're protecting without realizing it
+- Reveal what they're actually asking underneath the surface question
+- Name the thing that keeps appearing in their answers that they didn't notice they kept returning to
 
-Rules:
-- Direct address only. "You..." not "they"
-- DO NOT summarize what they said
-- Point to the MEANING underneath their words
-- Focus on tensions, gaps, or unspoken truths
-- No advice. No reassurance. No fixing.
-- Simple, everyday language
-- Let the insight be implied, not explained
+How to write it:
+- Start with what you notice, not what you conclude
+- Use "you" — always toward them, never about them
+- Don't explain the insight. Let it land. Trust them to feel it.
+- The last sentence should be the one that goes quiet in the room
+- Write like someone who sees them clearly and isn't afraid to say so — but gently, not surgically
 
-What would make them pause and think "how did you know that"? Say that."""
+Ask yourself before finishing: 
+"Would they pause when they read this? Would they read it twice?"
+If no — rewrite it.
+
+What you're NOT writing:
+- A summary of their answers
+- A compliment
+- Advice dressed as observation
+- Something that could apply to anyone else
+
+If you know their recurring themes, go one layer deeper than you would for a stranger.
+Reference the pattern without naming it explicitly. Make them feel genuinely known, not just heard."""
 
     return _chat(prompt, system=system).strip() or "What you shared matters. Take a moment to be with it."
+
+
+def get_closing(thought: str, answers: list | dict, mirror: str, mood_word: str | None, reflection_mode: str = "gentle", user_context: dict | None = None) -> str:
+    """
+    Generate a closing moment for the reflection experience.
+    Returns two movements: THE NAMED TRUTH and THE OPEN THREAD.
+    Under 80 words total. Flows as one piece.
+    """
+    personalization_block = _build_personalization_block(user_context)
+
+    # Format answers for prompt
+    if isinstance(answers, dict):
+        answers_text = "\n".join([f"- {q}: {a}" for q, a in answers.items() if a])
+    elif isinstance(answers, list):
+        answers_text = "\n".join([f"- {a}" for a in answers if a])
+    else:
+        answers_text = str(answers) if answers else "No specific answers provided."
+    
+    mood_text = mood_word or "neutral"
+    
+    system = """You are writing the closing moment of a reflection experience. 
+Your job is not to summarize or advise. 
+Your job is to make this person feel genuinely seen — 
+and to leave a thread open that makes tomorrow feel worth noticing.
+
+You speak TO the person. Always "you." Never "they."
+Simple language only. No jargon. No complex words.
+No bullet points. Flows as one piece.
+No advice. No fixing. No reassurance.
+Under 80 words total."""
+
+    prompt = f"""The person shared this thought:
+{thought}
+
+Their answers through the reflection: {answers_text}
+
+The mirror they received: {mirror}
+
+Their mood after: {mood_text}
+{f"Context about this person from their history:{chr(10)}{personalization_block}" if personalization_block else ""}
+
+Write a closing in two movements with NO visible separation or headers:
+
+MOVEMENT 1 — THE NAMED TRUTH:
+The one thing this conversation revealed about them.
+Not a summary. The thing underneath.
+Specific enough that no one else could receive this exact sentence.
+This is the moment they feel seen.
+
+MOVEMENT 2 — THE OPEN THREAD:
+Start with exactly "Between now and next time —"
+One thing to notice in their life before they return.
+Not a task. Not advice. An invitation to pay attention 
+to something already in their life.
+Makes the conversation feel paused, not ended.
+
+Tone calibration:
+- If mood is heavy or dark: soften the named truth, 
+  make the open thread gentle and steady
+- If mood is neutral or lifted: named truth can be 
+  clearer and more direct, open thread more curious and open
+
+If you know their recurring themes, the Named Truth should feel like it names something 
+they've been circling for a while — not just from today's session.
+The Open Thread should invite them toward something relevant to their patterns.
+Make it feel like the app genuinely knows them."""
+
+    try:
+        result = _chat(prompt, system=system).strip()
+        if result and len(result) > 0:
+            return result
+    except Exception as e:
+        logger.warning("Closing generation failed: %s", e)
+    
+    # Fallback
+    return "You showed up today. That matters. Between now and next time — notice what you're already carrying. It's worth your attention."
 
 
 def extract_pattern(thought: str, sections: list[dict]) -> dict | None:
@@ -260,11 +699,14 @@ def get_mood_suggestions(thought: str, mirror_text: str | None = None) -> list[d
     if not thought and not mirror_text:
         return MOOD_SUGGESTIONS_FALLBACK
 
-    system = """You're offering language, not diagnosis. The person just reflected on something—now they might want words to describe the internal weather of this moment.
+    system = """The person just reflected on something real. They might want language for the internal weather of this moment.
 
-Create 4-5 short metaphor phrases (like "foggy morning" or "low battery") that fit what they shared. Each phrase should feel like it could name something real about their experience—something they might say to a friend.
+Based on what they shared, offer 4-5 short phrases — the kind someone might text a close friend to describe how they're feeling without explaining it.
 
-Not therapy language. Not diagnosis. Just human words for internal states."""
+Not therapy language. Not poetic. Just human.
+Like: 'driving with no destination' or 'background static' or 'almost fine.'
+
+Each phrase should fit what they actually described — nothing generic survives here. Make them think 'yes, that's the one.'"""
 
     context_parts = []
     if thought:
@@ -368,37 +810,27 @@ Sound like a caring friend, not a productivity app. No quotes."""
 
 
 def get_insight_letter(reflections_summary: str) -> str:
-    system = """You write a short, warm reflection TO someone about their past few days of thoughts. Like a thoughtful friend who's been paying attention.
+    system = """You're writing to someone about their past few days of thoughts. Not summarizing. Noticing.
 
 STRICT FORMAT:
-- EXACTLY 100-150 words (count them)
-- NO greeting (no "Dear," "Hi," names)
-- NO closing (no "Sincerely," signature)
-- Start with a direct observation
-- 2-3 short paragraphs
+- 100–150 words exactly
+- No greeting. No sign-off. No name.
+- Start mid-thought, like you've been watching and finally speaking
+- 2–3 short paragraphs
 - No repetition
 
 VOICE:
-- "You" throughout—speaking TO them
-- Observational, not analytical
-- Friend who notices things, not therapist
-- Simple, grounded language
-- Warm but honest
+- "You" throughout
+- A friend who pays close attention, not a therapist who takes notes
+- Warm but honest — the kind of honest that feels like care
+- Simple language. Nothing that needs to be re-read to be understood.
 
-CONTENT:
-- What they've been circling
-- Threads between their entries
-- What you notice about how they're thinking
-- Moments that stand out
+What you're capturing:
+- A pattern they probably didn't notice across their thoughts
+- One tension that kept showing up in different forms
+- What it suggests about where they are right now — not where they should go
 
-FORBIDDEN:
-- Advice or suggestions
-- Questions
-- Stats/counts/numbers
-- The word "I"
-- Any repetition
-- Psychology language
-- Motivation speak"""
+End on something open. Not resolved. True."""
 
     if not (reflections_summary or "").strip():
         prompt = """They didn't reflect much in the past 5 days.
@@ -407,12 +839,14 @@ Write exactly 100-150 words. Be warm and honest.
 
 Acknowledge without guilt that sometimes there isn't space to pause. Notice that they're here now, which means something. Gently wonder (without asking questions) what these past few days have felt like.
 
-No greeting, no closing. Start with a warm, direct observation. Use "you."
+No greeting, no closing. Start mid-thought, like you've been watching. Use "you."
 
 Not: "Dear friend, it's okay that..."
 Yes: "These past few days didn't leave much room for pausing..."
 
 No advice. No productivity guilt. No "you've got this." Just acknowledgment and gentle presence.
+
+End on something open. Not resolved. True.
 
 Count your words. 100-150 only."""
     else:
@@ -423,16 +857,15 @@ Count your words. 100-150 only."""
 Write EXACTLY 100-150 words reflecting what you noticed across these days.
 
 What to look for:
-- Recurring themes (what keeps showing up?)
-- Shifts in tone or time orientation
-- What they're wrestling with vs. what they're avoiding
-- Tensions between entries
-- What seems to matter most, even when unspoken
+- A pattern they probably didn't notice across their thoughts
+- One tension that kept showing up in different forms
+- What it suggests about where they are right now — not where they should go
 
 Structure (weave naturally, don't label):
-- Opening: What stands out across these days
-- Middle: Specific observations from their entries
-- Closing: Where they seem to be now
+- Start mid-thought, like you've been watching and finally speaking
+- What stands out across these days
+- Specific observations from their entries
+- End on something open. Not resolved. True.
 
 Write TO them. Make it specific to THEIR entries, not generic wisdom. No salutation, no sign-off. Start directly with what you noticed.
 

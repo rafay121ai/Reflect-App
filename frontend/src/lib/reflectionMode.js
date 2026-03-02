@@ -60,10 +60,7 @@ export function getReflectionMode() {
  *   });
  */
 export function setReflectionMode(mode) {
-  if (!REFLECTION_MODES[mode]) {
-    console.warn(`Invalid reflection mode: ${mode}`);
-    return false;
-  }
+  if (!REFLECTION_MODES[mode]) return false;
   try {
     localStorage.setItem(REFLECTION_MODE_KEY, mode);
     return true;

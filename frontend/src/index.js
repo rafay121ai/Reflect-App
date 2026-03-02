@@ -1,14 +1,29 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
+import { BrowserRouter, Routes, Route } from "react-router-dom";
 import "./index.css";
 import App from "./App";
+import AppErrorBoundary from "./components/AppErrorBoundary";
 import { AuthProvider } from "./contexts/AuthContext";
+import { RevenueCatProvider } from "./contexts/RevenueCatContext";
+import PrivacyPolicy from "./pages/PrivacyPolicy";
+import TermsOfService from "./pages/TermsOfService";
 
 const root = ReactDOM.createRoot(document.getElementById("root"));
 root.render(
   <React.StrictMode>
-    <AuthProvider>
-      <App />
-    </AuthProvider>
+    <AppErrorBoundary>
+      <BrowserRouter>
+        <AuthProvider>
+          <RevenueCatProvider>
+            <Routes>
+              <Route path="/" element={<App />} />
+              <Route path="/privacy" element={<PrivacyPolicy />} />
+              <Route path="/terms" element={<TermsOfService />} />
+            </Routes>
+          </RevenueCatProvider>
+        </AuthProvider>
+      </BrowserRouter>
+    </AppErrorBoundary>
   </React.StrictMode>,
 );

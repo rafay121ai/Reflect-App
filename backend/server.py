@@ -1,5 +1,16 @@
 """
 REFLECT backend – FastAPI server that uses local Ollama (e.g. Qwen) for reflections.
+
+# ============================================================
+# PRODUCTION ENVIRONMENT VARIABLES REQUIRED ON RAILWAY:
+# SUPABASE_URL
+# SUPABASE_SERVICE_KEY
+# SUPABASE_JWT_SECRET
+# LLM_PROVIDER=openrouter
+# OPENROUTER_API_KEY
+# OPENROUTER_MODEL=openai/gpt-4.1-mini
+# ALLOWED_ORIGINS=https://your-app.vercel.app
+# ============================================================
 """
 import logging
 import os
@@ -9,22 +20,33 @@ from datetime import datetime, timezone, timedelta
 
 from dotenv import load_dotenv
 load_dotenv()  # load .env before other modules read SUPABASE_* etc.
-from fastapi import Depends, FastAPI, Header, HTTPException
+from fastapi import BackgroundTasks, Depends, FastAPI, Header, HTTPException
+from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
+from starlette.requests import Request
 
 from auth import require_user_id
 
-from llm_provider import get_reflection, get_personalized_mirror, extract_pattern, get_mood_suggestions, get_reminder_message, get_insight_letter, convert_moods_to_feelings, llm_chat
+from llm_provider import get_reflection, get_personalized_mirror, extract_pattern, get_mood_suggestions, get_reminder_message, get_insight_letter, get_closing, convert_moods_to_feelings, llm_chat
 from pattern_analyzer import analyze_patterns_deep_sync
+from revenuecat_client import get_subscription_status as get_rc_subscription_status
+from usage_limits import enforce_reflection_limit, rollback_reflection_usage
 from supabase_client import (
+    get_personalization_context,
     insert_reflection,
     update_reflection,
+    update_reflection_closing,
     insert_reflection_pattern,
     insert_mood_checkin,
     insert_revisit_reminder,
+    get_reminder_by_id,
     delete_reminder,
     get_reflection_by_id,
+    list_reflections_by_user,
     get_due_reminders,
     get_supabase_status,
     insert_saved_reflection,
@@ -41,6 +63,7 @@ from supabase_client import (
     get_profile,
     upsert_profile,
     sync_profile_from_auth,
+    delete_user_data,
     refresh_personalization_context_for_user,
     refresh_personalization_context_all,
 )
@@ -50,7 +73,12 @@ logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 logging.getLogger("supabase_client").setLevel(logging.WARNING)
 logging.getLogger("ollama_client").setLevel(logging.WARNING)
 
+# Route handlers are sync def; FastAPI runs them in a thread pool, so blocking Supabase/LLM calls do not block the event loop.
 app = FastAPI(title="REFLECT API", version="0.1.0")
+
+limiter = Limiter(key_func=get_remote_address)
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 # Personalization refresh: interval in hours (0 = disabled). Default 24.
 PERSONALIZATION_REFRESH_INTERVAL_HOURS = float(os.getenv("PERSONALIZATION_REFRESH_INTERVAL_HOURS", "24").strip() or "0")
@@ -73,10 +101,33 @@ def _run_personalization_refresh_all():
         time.sleep(interval_sec)
 
 
+def _require_env(name: str, value: str | None) -> None:
+    """Raise RuntimeError if required env var is missing or empty (fail-fast at startup)."""
+    if not value or not str(value).strip():
+        raise RuntimeError(
+            f"REFLECT backend cannot start: required env var {name} is missing or empty. "
+            f"Set {name} in backend/.env or your deployment environment."
+        )
+
+
 @app.on_event("startup")
 def startup():
+    _require_env("SUPABASE_URL", os.getenv("SUPABASE_URL"))
+    _require_env("SUPABASE_SERVICE_KEY", os.getenv("SUPABASE_SERVICE_KEY") or os.getenv("SUPABASE_KEY"))
+    _require_env("SUPABASE_JWT_SECRET", os.getenv("SUPABASE_JWT_SECRET"))
+    # ALLOWED_ORIGINS: not required at startup — defaults to http://localhost:3000 for dev; set in production
+    llm_provider = (os.getenv("LLM_PROVIDER", "ollama") or "ollama").strip().lower()
+    if llm_provider == "openai":
+        _require_env("OPENAI_API_KEY", os.getenv("OPENAI_API_KEY"))
+    elif llm_provider == "openrouter":
+        _require_env("OPENROUTER_API_KEY", os.getenv("OPENROUTER_API_KEY"))
+
     from llm_provider import LLM_PROVIDER
     logging.info("LLM provider: %s", LLM_PROVIDER)
+    # CORS: log allowed origins so production deployers can verify
+    logging.info("CORS allowed_origins: %s", ALLOWED_ORIGINS)
+    if not os.getenv("ALLOWED_ORIGINS", "").strip():
+        logging.warning("ALLOWED_ORIGINS not set; using default http://localhost:3000 — set ALLOWED_ORIGINS in production")
     status = get_supabase_status()
     if status == "ok":
         logging.info("Supabase: configured (reflections will be stored)")
@@ -89,48 +140,40 @@ def startup():
         t.start()
         logging.info("Personalization auto-refresh: every %.1f hours", PERSONALIZATION_REFRESH_INTERVAL_HOURS)
 
-# CORS: set ALLOWED_ORIGINS in production (e.g. https://your-app.vercel.app or https://*.vercel.app for previews)
-_cors_raw = os.getenv("ALLOWED_ORIGINS", "http://localhost:3000,http://127.0.0.1:3000").strip().split(",")
-_cors_exact = []
-_cors_regex_str = None
-for o in _cors_raw:
-    o = o.strip()
-    if not o:
-        continue
-    if "*" in o:
-        # e.g. https://*.vercel.app -> allow any subdomain
-        _cors_regex_str = o.replace(".", r"\.").replace("*", "[^/]+")
-    else:
-        _cors_exact.append(o)
-_cors_kw = {"allow_origins": _cors_exact, "allow_credentials": True, "allow_methods": ["*"], "allow_headers": ["*"]}
-if _cors_regex_str:
-    _cors_kw["allow_origin_regex"] = f"^{_cors_regex_str}$"
-app.add_middleware(CORSMiddleware, **_cors_kw)
+# CORS: get allowed origins from environment (set ALLOWED_ORIGINS in production)
+ALLOWED_ORIGINS = [o.strip() for o in os.getenv("ALLOWED_ORIGINS", "http://localhost:3000").split(",") if o.strip()]
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=ALLOWED_ORIGINS,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
 class ReflectRequest(BaseModel):
-    thought: str
-    reflection_mode: str | None = "gentle"  # "gentle" | "direct" | "quiet"
+    thought: str = Field(..., max_length=5000)
+    reflection_mode: str | None = Field(default="gentle", max_length=50)  # "gentle" | "direct" | "quiet"
 
 
 class MirrorRequest(BaseModel):
-    thought: str
-    questions: list[str]
+    thought: str = Field(..., max_length=5000)
+    questions: list[str]  # max 10 items, each validated by length in practice
     answers: dict | list  # dict keyed by question or index, or list of 3 answers
-    reflection_id: str | None = None  # if set, we update this row in Supabase with Q&A + mirror
+    reflection_id: str | None = Field(default=None, max_length=100)  # if set, we update this row in Supabase with Q&A + mirror
 
 
 class MoodRequest(BaseModel):
-    reflection_id: str
-    word_or_phrase: str  # the word or phrase they chose; no scores, no labels
-    description: str | None = None  # optional; from the suggestion card when they picked one
+    reflection_id: str = Field(..., max_length=100)
+    word_or_phrase: str = Field(..., max_length=200)  # the word or phrase they chose; no scores, no labels
+    description: str | None = Field(default=None, max_length=500)  # optional; from the suggestion card when they picked one
 
 
 class SaveHistoryRequest(BaseModel):
-    user_identifier: str
-    raw_text: str
+    user_identifier: str = Field(..., max_length=256)
+    raw_text: str = Field(..., max_length=50000)
     answers: list[dict]  # e.g. [{"question": "...", "response": "..."}]
-    mirror_response: str
+    mirror_response: str = Field(..., max_length=50000)
     mood_word: str | None = None
     revisit_type: str | None = None  # 'come_back' | 'remind' for "to return" styling
 
@@ -150,8 +193,17 @@ class MoodSuggestRequest(BaseModel):
 
 
 class RemindRequest(BaseModel):
-    reflection_id: str
+    reflection_id: str = Field(..., max_length=100)
     days: int  # 1, 2, 3, or 7
+
+
+class ClosingRequest(BaseModel):
+    thought: str = Field(..., max_length=5000)
+    answers: dict | list  # dict keyed by question or index, or list of answers
+    mirror_response: str = Field(..., max_length=3000)
+    mood_word: str | None = Field(default=None, max_length=200)
+    reflection_id: str | None = Field(default=None, max_length=100)  # if set, we update this row in Supabase with closing_text
+    reflection_mode: str | None = Field(default="gentle", max_length=50)  # "gentle" | "direct" | "quiet"
 
 
 @app.get("/")
@@ -177,13 +229,15 @@ def health():
 
 
 @app.get("/api/reflections/{reflection_id}")
-def get_reflection_route(reflection_id: str):
-    """Get one reflection by id (for opening from notification or 'come back later')."""
+def get_reflection_route(reflection_id: str, user_id: str = Depends(require_user_id)):
+    """Get one reflection by id (for opening from notification or 'come back later'). Returns only if owned by current user."""
     if not reflection_id or not reflection_id.strip():
         raise HTTPException(status_code=400, detail="reflection_id is required")
     try:
         row = get_reflection_by_id(reflection_id.strip())
         if not row:
+            raise HTTPException(status_code=404, detail="Reflection not found")
+        if (row.get("user_id") or "").strip() != user_id:
             raise HTTPException(status_code=404, detail="Reflection not found")
         return row
     except HTTPException:
@@ -193,10 +247,12 @@ def get_reflection_route(reflection_id: str):
 
 
 @app.get("/api/reminders/due")
-def reminders_due():
-    """Get reminders where remind_at <= now (for in-app 'you wanted to come back' and opening reflection)."""
+def reminders_due(user_id: str = Depends(require_user_id)):
+    """Get reminders where remind_at <= now, for reflections owned by the current user only."""
     try:
-        reminders = get_due_reminders()
+        all_due = get_due_reminders()
+        user_reflection_ids = {r["id"] for r in list_reflections_by_user(user_id, limit=5000) if r.get("id")}
+        reminders = [m for m in all_due if (m.get("reflection_id") or "") in user_reflection_ids]
         return {"reminders": reminders}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -214,17 +270,31 @@ def _llm_error_message(e: Exception) -> str:
     return f"Reflection service error: {e}"
 
 
-def _do_reflect(body: ReflectRequest):
+def _do_reflect(body: ReflectRequest, user_id: str | None = None, background_tasks: BackgroundTasks | None = None):
     """Shared logic for POST /api/reflect (with or without trailing slash)."""
     if not (body.thought or "").strip():
         raise HTTPException(status_code=400, detail="thought is required")
+
+    # Server-side rate limit by subscription tier (JWT user_id only; no trust of frontend)
+    if user_id:
+        rc = get_rc_subscription_status(user_id)
+        plan_type = (rc.get("plan_type") or "trial").strip().lower()
+        period_start_rc = rc.get("period_start")
+        usage_row = enforce_reflection_limit(user_id, plan_type, period_start_rc)
+        if usage_row is None:
+            return JSONResponse(
+                status_code=429,
+                content={"error": "Reflection limit reached"},
+            )
+
+    user_context = (get_personalization_context(user_id) or {}) if user_id else {}
     try:
         thought = body.thought.strip()
         # Validate and pass reflection mode to LLM
         mode = (body.reflection_mode or "gentle").lower()
         if mode not in ("gentle", "direct", "quiet"):
             mode = "gentle"
-        sections = get_reflection(thought, reflection_mode=mode)
+        sections = get_reflection(thought, reflection_mode=mode, user_context=user_context)
         pattern_id = None
         pattern = extract_pattern(thought, sections)
         if pattern:
@@ -237,11 +307,17 @@ def _do_reflect(body: ReflectRequest):
                 logging.warning("Pattern insert returned None (check Supabase reflection_patterns table)")
         else:
             logging.info("Pattern extraction returned None (LLM may have returned non-JSON)")
-        reflection_id = insert_reflection(thought, sections, pattern_id=pattern_id)
+        reflection_id = insert_reflection(thought, sections, user_id=user_id, pattern_id=pattern_id)
+        if background_tasks and user_id:
+            background_tasks.add_task(refresh_personalization_context_for_user, user_id)
         return {"id": reflection_id, "sections": sections}
     except HTTPException:
         raise
     except Exception as e:
+        if user_id:
+            rc = get_rc_subscription_status(user_id)
+            plan_type = (rc.get("plan_type") or "trial").strip().lower()
+            rollback_reflection_usage(user_id, plan_type)
         logging.exception("Reflect failed: %s", e)
         raise HTTPException(status_code=502, detail=_llm_error_message(e))
 
@@ -254,19 +330,22 @@ def reflect_get():
 
 @app.post("/api/reflect")
 @app.post("/api/reflect/")
-def reflect(body: ReflectRequest):
-    return _do_reflect(body)
+@limiter.limit("10/minute")
+def reflect(request: Request, body: ReflectRequest, background_tasks: BackgroundTasks, user_id: str = Depends(require_user_id)):
+    return _do_reflect(body, user_id=user_id, background_tasks=background_tasks)
 
 
 @app.post("/api/mirror/personalized")
-def mirror_personalized(body: MirrorRequest):
+@limiter.limit("10/minute")
+def mirror_personalized(request: Request, body: MirrorRequest, user_id: str = Depends(require_user_id)):
     if not (body.thought or "").strip():
         raise HTTPException(status_code=400, detail="thought is required")
+    user_context = get_personalization_context(user_id) or {}
     try:
         thought = body.thought.strip()
         questions = body.questions
         answers = body.answers if isinstance(body.answers, list) else [body.answers.get(q, body.answers.get(str(i), "")) for i, q in enumerate(questions)]
-        content = get_personalized_mirror(thought, questions, answers)
+        content = get_personalized_mirror(thought, questions, answers, user_context=user_context)
         if body.reflection_id:
             update_reflection(body.reflection_id, questions, answers, content)
         return {"content": content}
@@ -274,8 +353,35 @@ def mirror_personalized(body: MirrorRequest):
         raise HTTPException(status_code=502, detail=f"Ollama error: {e}")
 
 
+@app.post("/api/closing")
+@limiter.limit("10/minute")
+def closing(request: Request, body: ClosingRequest, user_id: str = Depends(require_user_id)):
+    """Generate closing moment with named truth + open thread. Updates reflection with closing_text if reflection_id provided."""
+    if not (body.thought or "").strip():
+        raise HTTPException(status_code=400, detail="thought is required")
+    if not (body.mirror_response or "").strip():
+        raise HTTPException(status_code=400, detail="mirror_response is required")
+    user_context = get_personalization_context(user_id) or {}
+    try:
+        thought = body.thought.strip()
+        mirror = body.mirror_response.strip()
+        mood_word = (body.mood_word or "").strip() or None
+        mode = body.reflection_mode or "gentle"
+        
+        closing_text = get_closing(thought, body.answers, mirror, mood_word, mode, user_context=user_context)
+        
+        if body.reflection_id:
+            update_reflection_closing(body.reflection_id, closing_text)
+        
+        return {"closing_text": closing_text}
+    except Exception as e:
+        logging.exception("Closing generation failed: %s", e)
+        raise HTTPException(status_code=502, detail=f"Closing generation error: {e}")
+
+
 @app.post("/api/remind")
-def remind(body: RemindRequest):
+@limiter.limit("10/minute")
+def remind(request: Request, body: RemindRequest, user_id: str = Depends(require_user_id)):
     """Set a gentle reminder to revisit this reflection in X days. Schedule via code; LLM helps with wording only."""
     if not (body.reflection_id or "").strip():
         raise HTTPException(status_code=400, detail="reflection_id is required")
@@ -299,10 +405,18 @@ def remind(body: RemindRequest):
 
 
 @app.delete("/api/reminders/{reminder_id}")
-def reminder_delete(reminder_id: str):
+def reminder_delete(reminder_id: str, user_id: str = Depends(require_user_id)):
     """Mark a reminder as consumed (e.g. user opened the reflection). Time-based trigger uses DB; delete after open."""
+    if not reminder_id or not reminder_id.strip():
+        raise HTTPException(status_code=400, detail="reminder_id is required")
+    reminder = get_reminder_by_id(reminder_id.strip())
+    if not reminder:
+        raise HTTPException(status_code=404, detail="Reminder not found")
+    reflection = get_reflection_by_id(reminder.get("reflection_id") or "") if reminder.get("reflection_id") else None
+    if not reflection or (reflection.get("user_id") or "").strip() != user_id:
+        raise HTTPException(status_code=404, detail="Reminder not found")
     try:
-        ok = delete_reminder(reminder_id)
+        ok = delete_reminder(reminder_id.strip())
         if not ok:
             raise HTTPException(status_code=404, detail="Reminder not found")
         return {"ok": True}
@@ -313,7 +427,8 @@ def reminder_delete(reminder_id: str):
 
 
 @app.post("/api/mood/suggest")
-def mood_suggest(body: MoodSuggestRequest):
+@limiter.limit("10/minute")
+def mood_suggest(request: Request, body: MoodSuggestRequest, user_id: str = Depends(require_user_id)):
     """Suggest 4–5 metaphor phrases with descriptions from thought + mirror. Not judging—offering language they might borrow."""
     thought = (body.thought or "").strip()
     mirror_text = (body.mirror_text or "").strip() or None
@@ -325,7 +440,7 @@ def mood_suggest(body: MoodSuggestRequest):
 
 
 @app.post("/api/mood")
-def mood(body: MoodRequest):
+def mood(body: MoodRequest, user_id: str = Depends(require_user_id)):
     """Store a mood check-in: word/phrase, optional description, linked to reflection. No scores, no labels."""
     if not (body.word_or_phrase or "").strip():
         raise HTTPException(status_code=400, detail="word_or_phrase is required")
@@ -346,7 +461,7 @@ def mood(body: MoodRequest):
 # ----- Saved reflections (history + open later) -----
 
 @app.post("/api/history")
-def history_save(body: SaveHistoryRequest, user_id: str = Depends(require_user_id)):
+def history_save(body: SaveHistoryRequest, background_tasks: BackgroundTasks, user_id: str = Depends(require_user_id)):
     """Save a completed reflection to history. status='normal' by default."""
     if not (body.raw_text or "").strip():
         raise HTTPException(status_code=400, detail="raw_text is required")
@@ -364,10 +479,7 @@ def history_save(body: SaveHistoryRequest, user_id: str = Depends(require_user_i
             mood_word=(body.mood_word or "").strip() or None,
             revisit_type=revisit,
         )
-        try:
-            refresh_personalization_context_for_user(user_id)
-        except Exception:
-            pass
+        background_tasks.add_task(refresh_personalization_context_for_user, user_id)
         return {"id": saved_id}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -507,6 +619,15 @@ def user_reflected_today(user_id: str = Depends(require_user_id)):
     since = f"{today_utc}T00:00:00Z"
     items = list_saved_reflections_since(user_id, since)
     return {"reflected_today": len(items) > 0}
+
+
+@app.delete("/api/user/account")
+def user_account_delete(user_id: str = Depends(require_user_id)):
+    """Permanently delete all user data and the auth account (GDPR-style account deletion). Irreversible."""
+    ok = delete_user_data(user_id, delete_auth_user=True)
+    if not ok:
+        raise HTTPException(status_code=500, detail="Account deletion failed. Please try again or contact support.")
+    return {"ok": True, "message": "Account and all data have been permanently deleted."}
 
 
 # ----- Personalization context (for emails; derived from patterns + mood + activity) -----

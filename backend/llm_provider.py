@@ -2,7 +2,7 @@
 LLM provider abstraction for REFLECT.
 
 The app uses a single LLM for: reflection sections, personalized mirror, pattern extraction.
-Switch providers via LLM_PROVIDER in .env (e.g. ollama, openai, anthropic).
+Switch providers via LLM_PROVIDER in .env (e.g. ollama, openai, openrouter).
 
 Contract (any provider must implement):
 - get_reflection(thought: str) -> list[dict]   # 6 sections: { "title", "content" }
@@ -11,6 +11,7 @@ Contract (any provider must implement):
 - get_mood_suggestions(thought: str) -> list[dict]  # 4–5 items: { "phrase", "description" }
 - get_reminder_message(thought: str | None, mirror_snippet: str | None) -> str  # wording only for revisit reminder
 - get_weekly_insight_letter(reflections_summary: str) -> str  # 2–5 sentences, observational, second-person
+- get_closing(thought, answers, mirror, mood_word, mode) -> str  # closing moment with named truth + open thread
 - convert_moods_to_feelings(mood_metaphors: list[str]) -> list[dict]  # convert metaphors to human feelings
 """
 import logging
@@ -23,27 +24,30 @@ LLM_PROVIDER = os.getenv("LLM_PROVIDER", "ollama").strip().lower()
 
 def _get_impl():
     if LLM_PROVIDER == "ollama":
-        from ollama_client import get_reflection, get_personalized_mirror, extract_pattern, get_mood_suggestions, get_reminder_message, get_insight_letter, convert_moods_to_feelings, llm_chat
-        return get_reflection, get_personalized_mirror, extract_pattern, get_mood_suggestions, get_reminder_message, get_insight_letter, convert_moods_to_feelings, llm_chat
+        from ollama_client import get_reflection, get_personalized_mirror, extract_pattern, get_mood_suggestions, get_reminder_message, get_insight_letter, get_closing, convert_moods_to_feelings, llm_chat
+        return get_reflection, get_personalized_mirror, extract_pattern, get_mood_suggestions, get_reminder_message, get_insight_letter, get_closing, convert_moods_to_feelings, llm_chat
+    if LLM_PROVIDER == "openai":
+        from openai_client import get_reflection, get_personalized_mirror, extract_pattern, get_mood_suggestions, get_reminder_message, get_insight_letter, get_closing, convert_moods_to_feelings, llm_chat
+        return get_reflection, get_personalized_mirror, extract_pattern, get_mood_suggestions, get_reminder_message, get_insight_letter, get_closing, convert_moods_to_feelings, llm_chat
     if LLM_PROVIDER == "openrouter":
-        from openrouter_client import get_reflection, get_personalized_mirror, extract_pattern, get_mood_suggestions, get_reminder_message, get_insight_letter, convert_moods_to_feelings, llm_chat
-        return get_reflection, get_personalized_mirror, extract_pattern, get_mood_suggestions, get_reminder_message, get_insight_letter, convert_moods_to_feelings, llm_chat
+        from openrouter_client import get_reflection, get_personalized_mirror, extract_pattern, get_mood_suggestions, get_reminder_message, get_insight_letter, get_closing, convert_moods_to_feelings, llm_chat
+        return get_reflection, get_personalized_mirror, extract_pattern, get_mood_suggestions, get_reminder_message, get_insight_letter, get_closing, convert_moods_to_feelings, llm_chat
     logger.warning("Unknown LLM_PROVIDER=%s, using ollama", LLM_PROVIDER)
-    from ollama_client import get_reflection, get_personalized_mirror, extract_pattern, get_mood_suggestions, get_reminder_message, get_insight_letter, convert_moods_to_feelings, llm_chat
-    return get_reflection, get_personalized_mirror, extract_pattern, get_mood_suggestions, get_reminder_message, get_insight_letter, convert_moods_to_feelings, llm_chat
+    from ollama_client import get_reflection, get_personalized_mirror, extract_pattern, get_mood_suggestions, get_reminder_message, get_insight_letter, get_closing, convert_moods_to_feelings, llm_chat
+    return get_reflection, get_personalized_mirror, extract_pattern, get_mood_suggestions, get_reminder_message, get_insight_letter, get_closing, convert_moods_to_feelings, llm_chat
 
 
-_get_reflection, _get_personalized_mirror, _extract_pattern, _get_mood_suggestions, _get_reminder_message, _get_insight_letter, _convert_moods_to_feelings, _llm_chat = _get_impl()
+_get_reflection, _get_personalized_mirror, _extract_pattern, _get_mood_suggestions, _get_reminder_message, _get_insight_letter, _get_closing, _convert_moods_to_feelings, _llm_chat = _get_impl()
 
 
-def get_reflection(thought: str, reflection_mode: str = "gentle") -> list[dict]:
+def get_reflection(thought: str, reflection_mode: str = "gentle", user_context: dict | None = None) -> list[dict]:
     """Generate 6 reflection sections from the user's thought. Mode affects tone/length."""
-    return _get_reflection(thought, reflection_mode=reflection_mode)
+    return _get_reflection(thought, reflection_mode=reflection_mode, user_context=user_context)
 
 
-def get_personalized_mirror(thought: str, questions: list, answers: list | dict) -> str:
+def get_personalized_mirror(thought: str, questions: list, answers: list | dict, user_context: dict | None = None) -> str:
     """Generate a short personalized mirror from thought + Q&A. Same signature for all providers."""
-    return _get_personalized_mirror(thought, questions, answers)
+    return _get_personalized_mirror(thought, questions, answers, user_context=user_context)
 
 
 def extract_pattern(thought: str, sections: list[dict]) -> dict | None:
@@ -70,6 +74,11 @@ def get_insight_letter(reflections_summary: str) -> str:
 def get_weekly_insight_letter(reflections_summary: str) -> str:
     """Alias for get_insight_letter."""
     return _get_insight_letter(reflections_summary)
+
+
+def get_closing(thought: str, answers: list | dict, mirror: str, mood_word: str | None, reflection_mode: str = "gentle", user_context: dict | None = None) -> str:
+    """Generate a closing moment with named truth + open thread. Under 80 words. Same signature for all providers."""
+    return _get_closing(thought, answers, mirror, mood_word, reflection_mode, user_context=user_context)
 
 
 def convert_moods_to_feelings(mood_metaphors: list[str]) -> list[dict]:

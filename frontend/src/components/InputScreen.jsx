@@ -1,10 +1,11 @@
 import { motion } from "framer-motion";
 import { Feather } from "lucide-react";
 
-const InputScreen = ({ thought, setThought, onSubmit }) => {
+const InputScreen = ({ thought, setThought, onSubmit, isSubmitting = false }) => {
   const charCount = thought.length;
   const isInRange = charCount >= 50 && charCount <= 500;
   const isEmpty = charCount === 0;
+  const disabled = isEmpty || isSubmitting;
 
   const getCharCountColor = () => {
     if (isEmpty) return "text-[#CBD5E0]";
@@ -18,7 +19,7 @@ const InputScreen = ({ thought, setThought, onSubmit }) => {
   };
 
   const handleKeyDown = (e) => {
-    if ((e.metaKey || e.ctrlKey) && e.key === 'Enter' && !isEmpty) {
+    if ((e.metaKey || e.ctrlKey) && e.key === 'Enter' && !isEmpty && !isSubmitting) {
       onSubmit();
     }
   };
@@ -95,25 +96,25 @@ const InputScreen = ({ thought, setThought, onSubmit }) => {
       {/* Submit button */}
       <motion.button
         onClick={onSubmit}
-        disabled={isEmpty}
-        whileHover={!isEmpty ? { scale: 1.02, x: 4 } : {}}
-        whileTap={!isEmpty ? { scale: 0.98 } : {}}
+        disabled={disabled}
+        whileHover={!disabled ? { scale: 1.02, x: 4 } : {}}
+        whileTap={!disabled ? { scale: 0.98 } : {}}
         className={`
           rounded-full px-10 py-4 text-lg font-medium
           transition-all duration-300 ease-out
-          ${isEmpty 
+          ${disabled 
             ? 'bg-[#E2E8F0] text-[#A0AEC0] cursor-not-allowed' 
             : 'text-white'
           }
         `}
-        style={!isEmpty ? { 
+        style={!disabled ? { 
           background: "linear-gradient(135deg, #FFB4A9 0%, #E0D4FC 100%)",
           boxShadow: "0 12px 32px rgba(255, 180, 169, 0.3)"
         } : {}}
         data-testid="reflect-button"
-        aria-label="Reflect on your thought"
+        aria-label={isSubmitting ? "Reflecting…" : "Reflect on your thought"}
       >
-        Reflect
+        {isSubmitting ? "Reflecting…" : "Reflect"}
       </motion.button>
 
       {/* Privacy note */}

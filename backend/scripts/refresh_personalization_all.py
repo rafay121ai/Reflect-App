@@ -6,6 +6,7 @@ For use in cron. Requires .env (or env) with PERSONALIZATION_CRON_SECRET and BAC
 Example cron (daily at 2am):
   0 2 * * * cd /path/to/backend && . venv/bin/activate && python scripts/refresh_personalization_all.py
 """
+import logging
 import os
 import sys
 
@@ -15,25 +16,29 @@ try:
 except ImportError:
     pass
 
+logging.basicConfig(level=logging.INFO, format="%(message)s")
+logger = logging.getLogger(__name__)
+
+
 def main():
     base = (os.getenv("BACKEND_URL") or "http://localhost:8000").rstrip("/")
     secret = (os.getenv("PERSONALIZATION_CRON_SECRET") or "").strip()
     if not secret:
-        print("PERSONALIZATION_CRON_SECRET not set in env", file=sys.stderr)
+        logger.error("PERSONALIZATION_CRON_SECRET not set in env")
         sys.exit(1)
     try:
         import httpx
     except ImportError:
-        print("httpx required: pip install httpx", file=sys.stderr)
+        logger.error("httpx required: pip install httpx")
         sys.exit(1)
     url = f"{base}/api/personalization/refresh-all"
     try:
         r = httpx.post(url, headers={"X-Cron-Secret": secret}, timeout=60.0)
         r.raise_for_status()
         data = r.json()
-        print(f"Updated {data.get('updated', 0)} users")
+        logger.info("Updated %d users", data.get("updated", 0))
     except Exception as e:
-        print(f"Error: {e}", file=sys.stderr)
+        logger.exception("Error calling refresh-all: %s", e)
         sys.exit(1)
 
 if __name__ == "__main__":

@@ -36,9 +36,7 @@ async function ensureNativeListener() {
       if (id && openReflectionHandler) openReflectionHandler(id);
     });
     nativeListenerRegistered = true;
-  } catch (e) {
-    console.warn("LocalNotifications listener failed:", e);
-  }
+  } catch (_) {}
 }
 
 /**
@@ -51,8 +49,7 @@ export async function requestNotificationPermission() {
       await ensureNativeListener();
       const perm = await LocalNotifications.requestPermissions();
       return perm?.display === "granted";
-    } catch (e) {
-      console.warn("Native notification permission failed:", e);
+    } catch (_) {
       return false;
     }
   }
@@ -97,8 +94,7 @@ export function scheduleRevisitNotification(reflectionId, remindAt, onOpenReflec
             },
           ],
         });
-      } catch (e) {
-        console.warn("LocalNotifications schedule failed:", e);
+      } catch (_) {
         if (typeof onOpenReflection === "function") onOpenReflection(reflectionId);
       }
     })();
@@ -120,8 +116,7 @@ export function scheduleRevisitNotification(reflectionId, remindAt, onOpenReflec
         n.close();
         if (typeof onOpenReflection === "function") onOpenReflection(reflectionId);
       };
-    } catch (e) {
-      console.warn("Notification failed:", e);
+    } catch (_) {
       if (typeof onOpenReflection === "function") onOpenReflection(reflectionId);
     }
   }, Math.min(ms, 2147483647));

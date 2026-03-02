@@ -5,11 +5,29 @@ It helps users sit with their thoughts, notice patterns gently, and return to th
 
 No public feeds.
 No productivity pressure.
-No “AI explains who you are.”
+No "AI explains who you are."
 
 Everything below serves this.
 
-1. Core Reflection Experience (Foundation)
+---
+
+## CUSTOMER JOURNEY (Start to End)
+
+### 1. First Experience & Onboarding
+🔐 User Accounts
+
+Secure auth.
+
+All data private per user.
+
+🆓 7-Day Free Trial
+
+Full access to all features.
+
+No artificial limitations.
+
+### 2. Core Reflection Flow
+
 ✍️ Guided Reflection Writing
 
 Users write a single thought or reflection.
@@ -20,7 +38,7 @@ No word limits.
 
 🪞 Mirror Response (AI)
 
-Calm, second-person reflection (“you” language).
+Calm, second-person reflection ("you" language).
 
 No advice, no fixing, no motivation.
 
@@ -30,7 +48,16 @@ Structured reflection sections (as you already designed).
 
 This is the heart of the app.
 
-2. Mood Tracking (Minimal, Non-Judgmental)
+🔁 Revisit Choice
+
+When viewing a mirror, users can choose:
+
+"Read now"
+
+"Come back later"
+
+"Remind me in X days reminder"
+
 😊 Mood Check-In (Optional)
 
 Mood as Metaphor
@@ -39,7 +66,7 @@ This is very on-brand for REFLECT.
 
 Prompt
 
-“If this moment were a scene, what would it be?”
+"If this moment were a scene, what would it be?"
 
 Options like:
 
@@ -57,20 +84,40 @@ Use later
 
 Weekly insight:
 
-“Your metaphors this week leaned toward waiting and pause.”
-🔍 Mood Awareness (Not Interpretation)
+"Your metaphors this week leaned toward waiting and pause."
 
-Mood is never auto-explained
+💡 Key Takeaway (Reflection Closure)
 
-No “you improved” or “you declined” language
+After mood check-in, users receive a gentle, personalized takeaway that brings closure to their reflection journey.
 
-Used only for:
+Purpose:
 
-gentle trends
+Provides a sense of completion and integration
 
-personal awareness
+Helps users carry forward what they've discovered
 
-3. Reflection History & Revisit
+Creates a natural endpoint to the reflection flow
+
+Format:
+
+One or two sentences that synthesize the reflection
+
+Observational tone—no advice or action items
+
+Draws from their thought, responses, and mirror reflection
+
+Example:
+
+"Today you noticed how much space work takes up, and how rest feels like something you have to earn rather than something you already have."
+
+"Something about waiting feels familiar here—not urgent, but present."
+
+This completes the journey: Explore → Reflect → See → Notice → Carry Forward
+
+The takeaway is saved with the reflection and can be revisited later
+
+### 3. Reflection History & Revisit
+
 📚 Reflection History
 
 Every reflection saved per user.
@@ -83,21 +130,11 @@ Clean, readable layout.
 
 Users can mark reflections they want to keep close.
 
-Language avoids “favorites” — framed as:
+Language avoids "favorites" — framed as:
 
-“Keep this”
+"Keep this"
 
-“Hold onto this”
-
-🔁 Revisit Later
-
-When viewing a mirror, users can choose:
-
-“Read now”
-
-“Come back later”
-
-“Remind me in X days reminder”
+"Hold onto this"
 
 ⏰ Revisit Reminders
 
@@ -105,9 +142,10 @@ Gentle reminder to return to a reflection they chose.
 
 Example tone:
 
-“You wanted to come back to this.”
+"You wanted to come back to this."
 
-4. Gentle Reminders & Check-Ins
+### 4. Ongoing Engagement
+
 🔔 Daily Reflection Reminder (Optional)
 
 User-chosen time.
@@ -120,9 +158,9 @@ No guilt language.
 
 Optional, occasional nudges like:
 
-“A quiet moment, if you want.”
+"A quiet moment, if you want."
 
-“If something stayed with you today…”
+"If something stayed with you today…"
 
 🛑 Full Control
 
@@ -130,7 +168,6 @@ Pause reminders anytime.
 
 Silence is respected.
 
-5. Personal Insights (Paid Feature Core)
 🧠 Weekly Personal Insight Letter
 
 Once a week, users receive a short written insight:
@@ -145,19 +182,50 @@ No charts. No labels. No diagnosis.
 
 This is one of the highest perceived-value features.
 
-🔍 “What’s Showing Up Lately”
+🔍 "What's Showing Up Lately"
 
 Soft thematic insights, such as:
 
-“Work came up often.”
+"Work came up often."
 
-“You wrote more about rest this week.”
+"You wrote more about rest this week."
 
 Based on reflection content + mood trends.
 
 Language is observational, never analytical.
 
-6. Light Visual Insights (Carefully Limited)
+🔍 Mood Awareness (Not Interpretation)
+
+Mood is never auto-explained
+
+No "you improved" or "you declined" language
+
+Used only for:
+
+gentle trends
+
+personal awareness
+
+---
+
+## SEPARATE FEATURES (Standalone)
+
+### 5. Reflection Modes (Premium Control)
+
+Users can choose how REFLECT responds:
+
+Gentle – softer language, more space
+
+Direct – clearer mirroring, fewer words
+
+Quiet – minimal response, mostly silence
+
+Same core logic, different tone.
+
+This makes the app feel personal, not generic.
+
+### 6. Light Visual Insights (Carefully Limited)
+
 📈 Reflection Frequency
 
 Simple chart:
@@ -174,26 +242,13 @@ No arrows, no scores, no judgments.
 
 Charts exist to notice, not to optimize.
 
-7. Reflection Modes (Premium Control)
+### 7. Resurfacing & Continuity (High-Value, Subtle)
 
-Users can choose how REFLECT responds:
-
-Gentle – softer language, more space
-
-Direct – clearer mirroring, fewer words
-
-Quiet – minimal response, mostly silence
-
-Same core logic, different tone.
-
-This makes the app feel personal, not generic.
-
-8. Resurfacing & Continuity (High-Value, Subtle)
-🔁 “Does This Still Feel True?”
+🔁 "Does This Still Feel True?"
 
 Occasionally resurfacing older reflections:
 
-“You wrote this two weeks ago. Does it still fit?”
+"You wrote this two weeks ago. Does it still fit?"
 
 Optional.
 
@@ -201,7 +256,8 @@ Can be turned off.
 
 This encourages reflection without forcing progress.
 
-9. Export & Sharing (Private by Default)
+### 8. Export & Sharing (Private by Default)
+
 📤 Export Reflections
 
 Export text or image of:
@@ -216,24 +272,13 @@ For personal keeping or sharing with someone trusted.
 
 No public sharing
 
-No browsing others’ reflections
+No browsing others' reflections
 
 No social feed
 
 Privacy is part of the value.
 
-10. Account, Trial & Subscription
-🔐 User Accounts
-
-Secure auth.
-
-All data private per user.
-
-🆓 7-Day Free Trial
-
-Full access to all features.
-
-No artificial limitations.
+### 9. Account & Subscription
 
 💳 Paid Subscription
 
@@ -253,22 +298,24 @@ reflection modes
 
 export
 
-11. Explicitly NOT Part of the Product (Locked Out)
+---
+
+## EXPLICITLY NOT PART OF THE PRODUCT (Locked Out)
 
 These ideas are intentionally excluded:
 
-❌ Reading other people’s reflections
+❌ Reading other people's reflections
 ❌ Social feeds or community browsing
 ❌ Streak gamification
-❌ Scores, grades, or “improvement” metrics
+❌ Scores, grades, or "improvement" metrics
 ❌ Diagnostic labels or mental-health claims
-❌ AI explaining “what’s wrong with you”
+❌ AI explaining "what's wrong with you"
 
 These would harm trust and intimacy.
 
 ---
 
-12. TODO / Implementation Notes
+## TODO / Implementation Notes
 
 📬 Insight Letter Notification (TODO)
 - Send a notification when a new insight letter is generated (every 5 days)

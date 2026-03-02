@@ -8,11 +8,15 @@
  * 4. Account
  */
 import { useState, useEffect, useCallback } from "react";
+import { Link } from "react-router-dom";
 import { motion } from "framer-motion";
-import { X, Check, Download, Trash2, User, ChevronRight } from "lucide-react";
+import { X, Check, Download, Trash2, User, ChevronRight, Crown, RefreshCw } from "lucide-react";
 import { useAuth } from "../contexts/AuthContext";
+import { useRevenueCat } from "../contexts/RevenueCatContext";
 import { getReflectionMode, setReflectionMode, getAvailableModes, DEFAULT_MODE } from "../lib/reflectionMode";
-import { getProfile, updateProfile } from "../lib/api";
+import { getProfile, updateProfile, getAuthHeaders } from "../lib/api";
+import { getBackendUrl } from "../lib/config";
+import { supabase } from "../lib/supabase";
 
 const DEFAULT_PREFS = {
   daily_reminder_enabled: false,
@@ -119,44 +123,79 @@ const ToggleRow = ({ label, sublabel, enabled, onChange, disabled, comingSoon })
 );
 
 // Action row (for buttons like export, delete)
-const ActionRow = ({ icon: Icon, label, sublabel, onClick, danger, disabled }) => (
-  <button
-    type="button"
-    onClick={onClick}
-    disabled={disabled}
-    className={`w-full flex items-center gap-3 p-3 rounded-xl border border-[#E2E8F0]/60 
-      transition-all duration-200 text-left group
-      ${danger 
-        ? "hover:border-red-200 hover:bg-red-50/30" 
-        : "hover:border-[#CBD5E1] hover:bg-[#F8FAFC]/50"
-      }
-      ${disabled ? "opacity-50 cursor-not-allowed" : "cursor-pointer"}
-    `}
-  >
-    <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${
-      danger ? "bg-red-50 text-red-400" : "bg-[#F1F5F9] text-[#64748B]"
-    }`}>
-      <Icon className="w-4 h-4" />
-    </div>
-    <div className="flex-1">
-      <span className={`text-sm ${danger ? "text-red-600" : "text-[#4A5568]"}`}>
-        {label}
-      </span>
-      {sublabel && (
-        <p className="text-xs text-[#94A3B8]">{sublabel}</p>
-      )}
-    </div>
-    <ChevronRight className={`w-4 h-4 ${danger ? "text-red-300" : "text-[#CBD5E1]"} 
-      group-hover:translate-x-0.5 transition-transform`} />
-  </button>
-);
+const ActionRow = ({ icon: Icon, label, sublabel, onClick, danger, disabled, href, to, target }) => {
+  const baseClass = `w-full flex items-center gap-3 p-3 rounded-xl border border-[#E2E8F0]/60 
+    transition-all duration-200 text-left group
+    ${danger 
+      ? "hover:border-red-200 hover:bg-red-50/30" 
+      : "hover:border-[#CBD5E1] hover:bg-[#F8FAFC]/50"
+    }
+    ${disabled ? "opacity-50 cursor-not-allowed" : "cursor-pointer"}
+  `;
+  const iconClass = `w-8 h-8 rounded-lg flex items-center justify-center ${
+    danger ? "bg-red-50 text-red-400" : "bg-[#F1F5F9] text-[#64748B]"
+  }`;
+  const content = (
+    <>
+      <div className={iconClass}>
+        <Icon className="w-4 h-4" />
+      </div>
+      <div className="flex-1">
+        <span className={`text-sm ${danger ? "text-red-600" : "text-[#4A5568]"}`}>
+          {label}
+        </span>
+        {sublabel && (
+          <p className="text-xs text-[#94A3B8]">{sublabel}</p>
+        )}
+      </div>
+      <ChevronRight className={`w-4 h-4 ${danger ? "text-red-300" : "text-[#CBD5E1]"} 
+        group-hover:translate-x-0.5 transition-transform`} />
+    </>
+  );
+  if (to) {
+    return (
+      <Link to={to} className={baseClass}>
+        {content}
+      </Link>
+    );
+  }
+  if (href) {
+    return (
+      <a href={href} target={target || undefined} rel={target === "_blank" ? "noopener noreferrer" : undefined} className={baseClass}>
+        {content}
+      </a>
+    );
+  }
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      className={baseClass}
+    >
+      {content}
+    </button>
+  );
+};
 
 // Main Settings Panel
 const SettingsPanel = ({ apiBase, onClose, onOpenSignIn }) => {
   const { user, signOut } = useAuth();
+  const {
+    isSupported: isRevenueCatSupported,
+    isPremium,
+    loading: revenueCatLoading,
+    error: revenueCatError,
+    presentPaywall,
+    presentCustomerCenter,
+    restorePurchases,
+  } = useRevenueCat();
   const [mode, setMode] = useState(DEFAULT_MODE);
   const [prefs, setPrefs] = useState({ ...DEFAULT_PREFS });
   const [prefsLoaded, setPrefsLoaded] = useState(false);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [restoring, setRestoring] = useState(false);
 
   useEffect(() => {
     setMode(getReflectionMode());
@@ -203,6 +242,31 @@ const SettingsPanel = ({ apiBase, onClose, onOpenSignIn }) => {
 
   const handleDeleteData = () => {
     alert("Delete feature coming soon. This will permanently remove all your reflections.");
+  };
+
+  const handleDeleteAccount = async () => {
+    if (!showDeleteConfirm) {
+      setShowDeleteConfirm(true);
+      return;
+    }
+    setDeleting(true);
+    try {
+      const res = await fetch(`${getBackendUrl()}/api/user/account`, {
+        method: "DELETE",
+        headers: getAuthHeaders(),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ detail: res.statusText }));
+        throw new Error(err.detail || "Delete failed");
+      }
+      await supabase.auth.signOut();
+      window.location.href = "/";
+    } catch (err) {
+      console.error("Failed to delete account:", err);
+      alert("Something went wrong. Please try again or contact support.");
+      setDeleting(false);
+      setShowDeleteConfirm(false);
+    }
   };
 
   return (
@@ -320,6 +384,91 @@ const SettingsPanel = ({ apiBase, onClose, onOpenSignIn }) => {
 
           <SectionDivider />
 
+          {/* Subscription (RevenueCat). Full UI on native; on web, show "available in app" */}
+          <section>
+            <SectionHeader
+              title="Subscription"
+              subtitle="Premium unlocks the full REFLECT experience"
+            />
+            {isRevenueCatSupported ? (
+              <>
+                {revenueCatError && (
+                  <p className="text-xs text-amber-600 bg-amber-50/50 rounded-lg px-3 py-2 mb-3">
+                    {revenueCatError}
+                  </p>
+                )}
+                <div className="space-y-2">
+                  <div className="p-4 rounded-xl bg-[#F8FAFC]/80 border border-[#E2E8F0]/40 flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                      <div className="w-10 h-10 rounded-full bg-[#FFB4A9]/20 flex items-center justify-center">
+                        <Crown className="w-5 h-5 text-[#FFB4A9]" />
+                      </div>
+                      <div>
+                        {revenueCatLoading ? (
+                          <p className="text-sm text-[#94A3B8]">Loading…</p>
+                        ) : isPremium ? (
+                          <>
+                            <p className="text-sm font-medium text-[#4A5568]">Premium</p>
+                            <p className="text-xs text-[#94A3B8]">You have full access</p>
+                          </>
+                        ) : (
+                          <>
+                            <p className="text-sm font-medium text-[#4A5568]">Free</p>
+                            <p className="text-xs text-[#94A3B8]">Upgrade for more</p>
+                          </>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                  <div className="flex flex-col gap-1.5">
+                    {!isPremium && (
+                      <button
+                        type="button"
+                        onClick={() => presentPaywall().catch(() => {})}
+                        className="w-full py-2.5 px-4 text-sm font-medium rounded-xl bg-[#FFB4A9]/30 text-[#4A5568] hover:bg-[#FFB4A9]/40 border border-[#FFB4A9]/40 transition-colors"
+                      >
+                        Upgrade to Premium
+                      </button>
+                    )}
+                    {isPremium && (
+                      <button
+                        type="button"
+                        onClick={() => presentCustomerCenter().catch(() => {})}
+                        className="w-full flex items-center justify-center gap-2 py-2.5 px-4 text-sm text-[#4A5568] rounded-xl border border-[#E2E8F0]/60 hover:bg-[#F8FAFC]/80 transition-colors"
+                      >
+                        Manage subscription
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        setRestoring(true);
+                        try {
+                          await restorePurchases();
+                        } finally {
+                          setRestoring(false);
+                        }
+                      }}
+                      disabled={restoring || revenueCatLoading}
+                      className="w-full flex items-center justify-center gap-2 py-2 text-sm text-[#94A3B8] hover:text-[#64748B] disabled:opacity-50"
+                    >
+                      <RefreshCw className={`w-4 h-4 ${restoring ? "animate-spin" : ""}`} />
+                      Restore purchases
+                    </button>
+                  </div>
+                </div>
+              </>
+            ) : (
+              <div className="p-4 rounded-xl bg-[#F8FAFC]/80 border border-[#E2E8F0]/40">
+                <p className="text-sm text-[#64748B]">
+                  In-app subscriptions are available in the REFLECT app for iOS and Android. Open the app on your device to upgrade or manage your subscription.
+                </p>
+              </div>
+            )}
+          </section>
+
+          <SectionDivider />
+
           {/* Section 3: Privacy */}
           <section>
             <SectionHeader 
@@ -327,6 +476,20 @@ const SettingsPanel = ({ apiBase, onClose, onOpenSignIn }) => {
               subtitle="Your data belongs to you"
             />
             <div className="space-y-2">
+              <ActionRow
+                icon={ChevronRight}
+                label="Privacy Policy"
+                sublabel="How we use and protect your data"
+                href="/privacy.html"
+                target="_blank"
+              />
+              <ActionRow
+                icon={ChevronRight}
+                label="Terms of Service"
+                sublabel="Terms of using REFLECT"
+                href="/terms.html"
+                target="_blank"
+              />
               <ActionRow
                 icon={Download}
                 label="Export your data"
@@ -396,6 +559,45 @@ const SettingsPanel = ({ apiBase, onClose, onOpenSignIn }) => {
               ) : null}
             </div>
           </section>
+
+          {/* Danger Zone — Delete Account (required by Apple) */}
+          {user ? (
+            <div className="mt-10 pt-6 border-t border-[#E2E8F0]/60">
+              <p className="text-[12px] text-[#94A3B8] mb-3">Danger Zone</p>
+              {!showDeleteConfirm ? (
+                <button
+                  type="button"
+                  onClick={handleDeleteAccount}
+                  className="w-full py-2.5 px-4 text-sm rounded-lg border border-red-200 text-red-600 hover:bg-red-50/30 transition-colors"
+                >
+                  Delete My Account
+                </button>
+              ) : (
+                <div>
+                  <p className="text-sm text-red-600/90 mb-3">
+                    This will permanently delete your account and all reflections. This cannot be undone.
+                  </p>
+                  <div className="flex items-center gap-3">
+                    <button
+                      type="button"
+                      onClick={handleDeleteAccount}
+                      disabled={deleting}
+                      className="py-2 px-4 text-sm rounded-lg bg-red-100 border border-red-300 text-red-700 hover:bg-red-200/80 disabled:opacity-50"
+                    >
+                      {deleting ? "Deleting..." : "Yes, delete everything"}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => { setShowDeleteConfirm(false); setDeleting(false); }}
+                      className="py-2 px-4 text-sm text-[#64748B] hover:text-[#4A5568]"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          ) : null}
 
           {/* Footer note */}
           <p className="text-[10px] text-[#94A3B8] text-center mt-6">
