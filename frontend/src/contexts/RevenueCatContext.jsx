@@ -102,7 +102,7 @@ export function RevenueCatProvider({ children }) {
       cancelled = true;
       removeListener();
     };
-  }, []);
+  }, [user?.id]);
 
   // When user signs in/out, log in or out of RevenueCat and refresh customer info
   useEffect(() => {
