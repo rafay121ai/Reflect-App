@@ -17,6 +17,7 @@ import { getReflectionMode, setReflectionMode, getAvailableModes, DEFAULT_MODE }
 import { getProfile, updateProfile, getAuthHeaders } from "../lib/api";
 import { getBackendUrl } from "../lib/config";
 import { supabase } from "../lib/supabase";
+import { openCheckout, getLemonVariants } from "../lib/lemonSqueezy";
 
 const DEFAULT_PREFS = {
   daily_reminder_enabled: false,
@@ -196,6 +197,17 @@ const SettingsPanel = ({ apiBase, onClose, onOpenSignIn }) => {
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [restoring, setRestoring] = useState(false);
+
+  const isNative = () => {
+    try {
+      const { Capacitor } = require("@capacitor/core");
+      return Capacitor.isNativePlatform();
+    } catch (_) {
+      return false;
+    }
+  };
+  const lemon = getLemonVariants();
+  const showLemonOnWeb = !isNative() && lemon.isConfigured && user?.id;
 
   useEffect(() => {
     setMode(getReflectionMode());
@@ -384,7 +396,7 @@ const SettingsPanel = ({ apiBase, onClose, onOpenSignIn }) => {
 
           <SectionDivider />
 
-          {/* Subscription (RevenueCat). Full UI on native; on web, show "available in app" */}
+          {/* Subscription (RevenueCat on native; Lemon Squeezy on web) */}
           <section>
             <SectionHeader
               title="Subscription"
@@ -458,6 +470,36 @@ const SettingsPanel = ({ apiBase, onClose, onOpenSignIn }) => {
                   </div>
                 </div>
               </>
+            ) : showLemonOnWeb ? (
+              <div className="space-y-2">
+                <div className="p-4 rounded-xl bg-[#F8FAFC]/80 border border-[#E2E8F0]/40 flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-full bg-[#FFB4A9]/20 flex items-center justify-center">
+                      <Crown className="w-5 h-5 text-[#FFB4A9]" />
+                    </div>
+                    <div>
+                      <p className="text-sm font-medium text-[#4A5568]">Free</p>
+                      <p className="text-xs text-[#94A3B8]">Upgrade for more reflections</p>
+                    </div>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() =>
+                    openCheckout(
+                      {
+                        variantId: lemon.variantMonthly || lemon.variantYearly,
+                        userId: user?.id,
+                        userEmail: user?.email || "",
+                      },
+                      (err) => err && (window.alert?.(err) || console.warn(err))
+                    )
+                  }
+                  className="w-full py-2.5 px-4 text-sm font-medium rounded-xl bg-[#FFB4A9]/30 text-[#4A5568] hover:bg-[#FFB4A9]/40 border border-[#FFB4A9]/40 transition-colors"
+                >
+                  Upgrade to Premium
+                </button>
+              </div>
             ) : (
               <div className="p-4 rounded-xl bg-[#F8FAFC]/80 border border-[#E2E8F0]/40">
                 <p className="text-sm text-[#64748B]">

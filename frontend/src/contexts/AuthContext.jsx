@@ -9,9 +9,7 @@ const AuthContext = createContext({
   user: null,
   session: null,
   loading: true,
-  signIn: async () => {},
-  signUp: async () => {},
-  signInWithOAuth: async () => {},
+  signInWithGoogle: async () => {},
   signOut: async () => {},
   error: null,
   clearError: () => {},
@@ -21,6 +19,17 @@ export function useAuth() {
   const ctx = useContext(AuthContext);
   if (!ctx) throw new Error("useAuth must be used within AuthProvider");
   return ctx;
+}
+
+function getRedirectTo() {
+  if (typeof window === "undefined") return undefined;
+  try {
+    const { Capacitor } = require("@capacitor/core");
+    if (Capacitor.isNativePlatform()) {
+      return "com.reflect.app://auth/callback";
+    }
+  } catch (_) {}
+  return window.location.origin + "/auth/callback";
 }
 
 export function AuthProvider({ children }) {
@@ -49,7 +58,7 @@ export function AuthProvider({ children }) {
           setError(
             errorDesc
               ? decodeURIComponent(String(errorDesc).replace(/\+/g, " "))
-              : "Sign-in failed. Check Google and Supabase settings below."
+              : "Sign-in failed. Check Google and Supabase settings."
           );
           setLoading(false);
           window.history.replaceState({}, document.title, window.location.pathname);
@@ -59,11 +68,11 @@ export function AuthProvider({ children }) {
         const code = params.get("code");
 
         if (code) {
-          const { data, error } = await supabase.auth.exchangeCodeForSession(code);
+          const { data, error: exchangeError } = await supabase.auth.exchangeCodeForSession(code);
 
           if (!cancelled) {
-            if (error) {
-              console.error("Code exchange failed:", error);
+            if (exchangeError) {
+              console.error("Code exchange failed:", exchangeError);
               setSession(null);
               setUser(null);
               setAuthToken(null);
@@ -71,9 +80,8 @@ export function AuthProvider({ children }) {
               setSession(data.session);
               setUser(data.session?.user ?? null);
               setAuthToken(data.session?.access_token ?? null);
-              syncProfile(API_BASE).catch(() => {}); // sync name/email to backend for personalization
+              syncProfile(API_BASE).catch(() => {});
             }
-
             window.history.replaceState({}, document.title, window.location.pathname);
             setLoading(false);
           }
@@ -84,33 +92,28 @@ export function AuthProvider({ children }) {
             const retry = await supabase.auth.getSession();
             s = retry.data?.session ?? null;
           }
-
           if (!cancelled) {
             setSession(s);
             setUser(s?.user ?? null);
             setAuthToken(s?.access_token ?? null);
             setLoading(false);
-            if (s?.access_token) syncProfile(API_BASE).catch(() => {}); // sync on existing session
+            if (s?.access_token) syncProfile(API_BASE).catch(() => {});
           }
         }
       } catch (err) {
         console.error("Auth init error:", err);
-        if (!cancelled) {
-          setLoading(false);
-        }
+        if (!cancelled) setLoading(false);
       }
     };
 
     initAuth();
 
-    const {
-      data: { subscription },
-    } = supabase.auth.onAuthStateChange((_event, session) => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
       if (!cancelled) {
         setSession(session);
         setUser(session?.user ?? null);
         setAuthToken(session?.access_token ?? null);
-        if (session?.access_token) syncProfile(API_BASE).catch(() => {}); // sync after login
+        if (session?.access_token) syncProfile(API_BASE).catch(() => {});
       }
     });
 
@@ -120,24 +123,21 @@ export function AuthProvider({ children }) {
     };
   }, []);
 
-  const signIn = async (email, password) => {
+  const signInWithGoogle = async () => {
     setError(null);
     if (!supabase) {
       setError("Auth is not configured.");
       return;
     }
-    const { error: e } = await supabase.auth.signInWithPassword({ email, password });
-    if (e) setError(e.message);
-    return e;
-  };
-
-  const signUp = async (email, password) => {
-    setError(null);
-    if (!supabase) {
-      setError("Auth is not configured.");
-      return;
-    }
-    const { error: e } = await supabase.auth.signUp({ email, password });
+    const redirectTo = getRedirectTo();
+    const options = {
+      redirectTo: redirectTo || window.location.origin + "/auth/callback",
+      scopes: "https://www.googleapis.com/auth/userinfo.email https://www.googleapis.com/auth/userinfo.profile",
+    };
+    const { error: e } = await supabase.auth.signInWithOAuth({
+      provider: "google",
+      options,
+    });
     if (e) setError(e.message);
     return e;
   };
@@ -147,35 +147,13 @@ export function AuthProvider({ children }) {
     if (supabase) await supabase.auth.signOut();
   };
 
-  const signInWithOAuth = async (provider) => {
-    setError(null);
-    if (!supabase) {
-      setError("Auth is not configured.");
-      return;
-    }
-    const options = {
-      redirectTo: typeof window !== "undefined" ? window.location.origin : undefined,
-    };
-    if (provider === "google") {
-      options.scopes = "https://www.googleapis.com/auth/userinfo.email https://www.googleapis.com/auth/userinfo.profile";
-    }
-    const { error: e } = await supabase.auth.signInWithOAuth({
-      provider,
-      options,
-    });
-    if (e) setError(e.message);
-    return e;
-  };
-
   const clearError = () => setError(null);
 
   const value = {
     user,
     session,
     loading,
-    signIn,
-    signUp,
-    signInWithOAuth,
+    signInWithGoogle,
     signOut,
     error,
     clearError,

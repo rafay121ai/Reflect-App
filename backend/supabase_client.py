@@ -61,6 +61,33 @@ def get_user_usage(user_id: str) -> dict | None:
     return None
 
 
+def update_user_plan(user_id: str, plan_type: str) -> bool:
+    """
+    Set or update user_usage plan (e.g. from Lemon Squeezy webhook).
+    Upserts user_usage with plan_type, reflections_used=0, period_start=now() UTC.
+    """
+    if not user_id or not str(user_id).strip():
+        return False
+    client = _get_client()
+    if not client:
+        return False
+    try:
+        from datetime import datetime, timezone
+        now_iso = datetime.now(timezone.utc).isoformat()
+        row = {
+            "user_id": user_id.strip(),
+            "plan_type": plan_type.strip().lower() or "trial",
+            "period_start": now_iso,
+            "reflections_used": 0,
+            "updated_at": now_iso,
+        }
+        client.table("user_usage").upsert(row, on_conflict="user_id").execute()
+        return True
+    except Exception as e:
+        logger.exception("Supabase update_user_plan failed: %s", e)
+        return False
+
+
 def ensure_user_usage_row(
     user_id: str,
     plan_type: str,

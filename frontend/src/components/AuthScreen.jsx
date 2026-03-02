@@ -13,33 +13,16 @@ const GoogleIcon = () => (
 );
 
 export default function AuthScreen({ compact = false }) {
-  const { signIn, signUp, signInWithOAuth, error, clearError } = useAuth();
-  const [mode, setMode] = useState("signin"); // "signin" | "signup"
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
-  const [submitting, setSubmitting] = useState(false);
-  const [oauthLoading, setOauthLoading] = useState(null); // "google" | null
-  const [successMessage, setSuccessMessage] = useState("");
+  const { signInWithGoogle, error, clearError } = useAuth();
+  const [loading, setLoading] = useState(false);
 
-  const handleOAuth = async (provider) => {
+  const handleGoogle = async () => {
     clearError();
-    setOauthLoading(provider);
-    await signInWithOAuth(provider);
-    setOauthLoading(null);
-  };
-
-  const handleSubmit = async (e) => {
-    e.preventDefault();
-    if (!email.trim() || !password) return;
-    setSubmitting(true);
-    clearError();
-    setSuccessMessage("");
-    const err = mode === "signin"
-      ? await signIn(email.trim(), password)
-      : await signUp(email.trim(), password);
-    setSubmitting(false);
-    if (!err && mode === "signup") {
-      setSuccessMessage("Check your email to confirm your account, then sign in.");
+    setLoading(true);
+    try {
+      await signInWithGoogle();
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -73,108 +56,29 @@ export default function AuthScreen({ compact = false }) {
           </>
         )}
 
-        {/* OAuth: Google */}
         <div className="space-y-2 mb-6">
           <button
             type="button"
-            onClick={() => handleOAuth("google")}
-            disabled={!!oauthLoading}
+            onClick={handleGoogle}
+            disabled={loading}
             className="w-full flex items-center justify-center gap-3 py-3 px-4 rounded-xl border border-[#E2E8F0] bg-white text-[#4A5568] hover:bg-[#F8FAFC] disabled:opacity-60 transition-colors font-medium"
           >
             <GoogleIcon />
-            {oauthLoading === "google" ? "Opening…" : "Continue with Google"}
+            {loading ? "Opening…" : "Continue with Google"}
           </button>
         </div>
 
-        <div className="relative mb-6">
-          <div className="absolute inset-0 flex items-center">
-            <div className="w-full border-t border-[#E2E8F0]" />
-          </div>
-          <div className="relative flex justify-center text-xs">
-            <span className="px-2 bg-[#FFFDF7] text-[#94A3B8]">or with email</span>
-          </div>
-        </div>
+        {error && (
+          <p className="text-sm text-red-600 bg-red-50 rounded-lg px-3 py-2 mb-4" role="alert">
+            {error}
+          </p>
+        )}
 
-        <form onSubmit={handleSubmit} className="space-y-4">
-          <div>
-            <label htmlFor="auth-email" className="block text-sm font-medium text-[#4A5568] mb-1">
-              Email
-            </label>
-            <input
-              id="auth-email"
-              type="email"
-              autoComplete="email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              className="w-full px-4 py-3 rounded-xl border border-[#E2E8F0] bg-white text-[#4A5568] placeholder-[#94A3B8] focus:outline-none focus:ring-2 focus:ring-[#FFB4A9]/40 focus:border-[#FFB4A9]/50 transition-colors"
-              placeholder="you@example.com"
-              required
-            />
-          </div>
-          <div>
-            <label htmlFor="auth-password" className="block text-sm font-medium text-[#4A5568] mb-1">
-              Password
-            </label>
-            <input
-              id="auth-password"
-              type="password"
-              autoComplete={mode === "signin" ? "current-password" : "new-password"}
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              className="w-full px-4 py-3 rounded-xl border border-[#E2E8F0] bg-white text-[#4A5568] placeholder-[#94A3B8] focus:outline-none focus:ring-2 focus:ring-[#FFB4A9]/40 focus:border-[#FFB4A9]/50 transition-colors"
-              placeholder="••••••••"
-              required
-              minLength={6}
-            />
-            {mode === "signup" && (
-              <p className="text-xs text-[#718096] mt-1">At least 6 characters.</p>
-            )}
-          </div>
-          {error && (
-            <p className="text-sm text-red-600 bg-red-50 rounded-lg px-3 py-2" role="alert">
-              {error}
-            </p>
-          )}
-          {successMessage && (
-            <p className="text-sm text-[#4A5568] bg-[#E0EBE4]/50 rounded-lg px-3 py-2">
-              {successMessage}
-            </p>
-          )}
-          <button
-            type="submit"
-            disabled={submitting}
-            className="w-full py-3 rounded-xl font-medium text-white transition-colors disabled:opacity-60"
-            style={{ background: "linear-gradient(135deg, #FFB4A9 0%, #FFDDD2 100%)" }}
-          >
-            {submitting ? "Please wait…" : mode === "signin" ? "Sign in" : "Create account"}
-          </button>
-        </form>
-
-        <p className="text-center text-sm text-[#718096] mt-6">
-          {mode === "signin" ? (
-            <>
-              No account?{" "}
-              <button
-                type="button"
-                onClick={() => { setMode("signup"); clearError(); setSuccessMessage(""); }}
-                className="text-[#6B7FD7] hover:underline font-medium"
-              >
-                Sign up
-              </button>
-            </>
-          ) : (
-            <>
-              Already have an account?{" "}
-              <button
-                type="button"
-                onClick={() => { setMode("signin"); clearError(); setSuccessMessage(""); }}
-                className="text-[#6B7FD7] hover:underline font-medium"
-              >
-                Sign in
-              </button>
-            </>
-          )}
-        </p>
+        {!compact && (
+          <p className="text-center text-xs text-[#94A3B8] mt-6">
+            We only use your email to sign you in. Your reflections stay private.
+          </p>
+        )}
       </div>
     </motion.div>
   );

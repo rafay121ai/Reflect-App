@@ -3,7 +3,8 @@
   "appName": "REFLECT",
   "webDir": "build",
   "server": {
-    "androidScheme": "https"
+    "androidScheme": "https",
+    "iosScheme": "com.reflect.app"
   },
   "plugins": {
     "LocalNotifications": {

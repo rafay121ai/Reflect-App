@@ -49,5 +49,18 @@
 	<string>Reflect uses notifications to send you gentle reminders to return to your reflections when you choose.</string>
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleURLName</key>
+			<string>com.reflect.app</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>com.reflect.app</string>
+			</array>
+			<key>CFBundleTypeRole</key>
+			<string>Editor</string>
+		</dict>
+	</array>
 </dict>
 </plist>
