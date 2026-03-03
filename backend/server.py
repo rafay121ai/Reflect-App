@@ -50,6 +50,8 @@ from supabase_client import (
     update_reflection,
     update_reflection_closing,
     insert_reflection_pattern,
+    update_reflection_pattern_reflection_id,
+    get_pattern_history_for_user,
     insert_mood_checkin,
     insert_revisit_reminder,
     get_reminder_by_id,
@@ -360,6 +362,7 @@ def _do_reflect(body: ReflectRequest, user_id: str | None = None, background_tas
             )
 
     user_context = (get_personalization_context(user_id) or {}) if user_id else {}
+    pattern_history_data = (get_pattern_history_for_user(user_id, 5) or []) if user_id else []
     try:
         thought = body.thought.strip()
         safe_thought = sanitize_for_llm(thought)
@@ -367,20 +370,27 @@ def _do_reflect(body: ReflectRequest, user_id: str | None = None, background_tas
         mode = (body.reflection_mode or "gentle").lower()
         if mode not in ("gentle", "direct", "quiet"):
             mode = "gentle"
-        sections = get_reflection(safe_thought, reflection_mode=mode, user_context=user_context)
+        sections = get_reflection(safe_thought, reflection_mode=mode, user_context=user_context, pattern_history=pattern_history_data)
         pattern_id = None
         pattern = extract_pattern(safe_thought, sections)
-        if pattern:
+        if pattern and user_id:
             pattern_id = insert_reflection_pattern(
-                pattern.get("emotional_tone"),
-                pattern.get("themes") or [],
-                pattern.get("time_orientation"),
+                user_id=user_id,
+                emotional_tone=pattern.get("emotional_tone"),
+                themes=pattern.get("themes") or [],
+                time_orientation=pattern.get("time_orientation"),
+                recurring_phrases=pattern.get("recurring_phrases"),
+                core_tension=pattern.get("core_tension"),
+                unresolved_threads=pattern.get("unresolved_threads"),
+                self_beliefs=pattern.get("self_beliefs"),
             )
             if not pattern_id:
                 logging.warning("Pattern insert returned None (check Supabase reflection_patterns table)")
-        else:
-            logging.info("Pattern extraction returned None (LLM may have returned non-JSON)")
         reflection_id = insert_reflection(thought, sections, user_id=user_id, pattern_id=pattern_id)
+        if pattern_id and reflection_id:
+            update_reflection_pattern_reflection_id(pattern_id, reflection_id)
+        if not pattern:
+            logging.info("Pattern extraction returned None (LLM may have returned non-JSON)")
         if background_tasks and user_id:
             background_tasks.add_task(refresh_personalization_context_for_user, user_id)
         return {"id": reflection_id, "sections": sections}
@@ -514,13 +524,13 @@ def mirror_personalized(request: Request, body: MirrorRequest, user_id: str = De
     if not (body.thought or "").strip():
         raise HTTPException(status_code=400, detail="thought is required")
     user_context = get_personalization_context(user_id) or {}
+    pattern_history_data = get_pattern_history_for_user(user_id, 5) or []
     try:
         thought = body.thought.strip()
         safe_thought = sanitize_for_llm(thought)
-        safe_thought = sanitize_for_llm(thought)
         questions = body.questions
         answers = body.answers if isinstance(body.answers, list) else [body.answers.get(q, body.answers.get(str(i), "")) for i, q in enumerate(questions)]
-        content = get_personalized_mirror(safe_thought, questions, answers, user_context=user_context)
+        content = get_personalized_mirror(safe_thought, questions, answers, user_context=user_context, pattern_history=pattern_history_data)
         if body.reflection_id:
             update_reflection(body.reflection_id, questions, answers, content)
         return {"content": content}
@@ -553,13 +563,15 @@ def closing(request: Request, body: ClosingRequest, user_id: str = Depends(requi
     if not (body.mirror_response or "").strip():
         raise HTTPException(status_code=400, detail="mirror_response is required")
     user_context = get_personalization_context(user_id) or {}
+    pattern_history_data = get_pattern_history_for_user(user_id, 5) or []
     try:
         thought = body.thought.strip()
+        safe_thought = sanitize_for_llm(thought)
         mirror = body.mirror_response.strip()
         mood_word = (body.mood_word or "").strip() or None
         mode = body.reflection_mode or "gentle"
 
-        closing_text = get_closing(safe_thought, body.answers, mirror, mood_word, mode, user_context=user_context)
+        closing_text = get_closing(safe_thought, body.answers, mirror, mood_word, mode, user_context=user_context, pattern_history=pattern_history_data)
         
         if body.reflection_id:
             update_reflection_closing(body.reflection_id, closing_text)

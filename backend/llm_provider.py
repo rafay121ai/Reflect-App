@@ -40,14 +40,14 @@ def _get_impl():
 _get_reflection, _get_personalized_mirror, _extract_pattern, _get_mood_suggestions, _get_reminder_message, _get_insight_letter, _get_closing, _convert_moods_to_feelings, _llm_chat = _get_impl()
 
 
-def get_reflection(thought: str, reflection_mode: str = "gentle", user_context: dict | None = None) -> list[dict]:
+def get_reflection(thought: str, reflection_mode: str = "gentle", user_context: dict | None = None, pattern_history: list[dict] | None = None) -> list[dict]:
     """Generate 6 reflection sections from the user's thought. Mode affects tone/length."""
-    return _get_reflection(thought, reflection_mode=reflection_mode, user_context=user_context)
+    return _get_reflection(thought, reflection_mode=reflection_mode, user_context=user_context, pattern_history=pattern_history)
 
 
-def get_personalized_mirror(thought: str, questions: list, answers: list | dict, user_context: dict | None = None) -> str:
+def get_personalized_mirror(thought: str, questions: list, answers: list | dict, user_context: dict | None = None, pattern_history: list[dict] | None = None) -> str:
     """Generate a short personalized mirror from thought + Q&A. Same signature for all providers."""
-    return _get_personalized_mirror(thought, questions, answers, user_context=user_context)
+    return _get_personalized_mirror(thought, questions, answers, user_context=user_context, pattern_history=pattern_history)
 
 
 def extract_pattern(thought: str, sections: list[dict]) -> dict | None:
@@ -76,9 +76,9 @@ def get_weekly_insight_letter(reflections_summary: str) -> str:
     return _get_insight_letter(reflections_summary)
 
 
-def get_closing(thought: str, answers: list | dict, mirror: str, mood_word: str | None, reflection_mode: str = "gentle", user_context: dict | None = None) -> str:
-    """Generate a closing moment with named truth + open thread. Under 80 words. Same signature for all providers."""
-    return _get_closing(thought, answers, mirror, mood_word, reflection_mode, user_context=user_context)
+def get_closing(thought: str, answers: list | dict, mirror: str, mood_word: str | None, reflection_mode: str = "gentle", user_context: dict | None = None, pattern_history: list[dict] | None = None) -> str:
+    """Generate a closing moment with named truth + open thread. Under 60 words. Same signature for all providers."""
+    return _get_closing(thought, answers, mirror, mood_word, reflection_mode, user_context=user_context, pattern_history=pattern_history)
 
 
 def convert_moods_to_feelings(mood_metaphors: list[str]) -> list[dict]:

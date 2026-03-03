@@ -201,29 +201,84 @@ def decrement_usage_atomic(user_id: str, plan_type: str) -> bool:
 
 
 def insert_reflection_pattern(
+    user_id: str,
     emotional_tone: str | None,
     themes: list[str],
     time_orientation: str | None,
+    reflection_id: str | None = None,
+    recurring_phrases: list[str] | None = None,
+    core_tension: str | None = None,
+    unresolved_threads: list[str] | None = None,
+    self_beliefs: list[str] | None = None,
 ) -> str | None:
     """
     Insert a reflection_pattern row. Returns the new row's id, or None if Supabase not configured.
-    Schema: reflection_patterns(id, emotional_tone, themes, time_orientation, timestamp).
+    Schema: reflection_patterns(id, user_id, reflection_id, emotional_tone, themes, time_orientation,
+    recurring_phrases, core_tension, unresolved_threads, self_beliefs, created_at).
     """
     client = _get_client()
     if not client:
         return None
     try:
         row = {
+            "user_id": user_id.strip(),
             "emotional_tone": emotional_tone,
-            "themes": themes,
+            "themes": themes if themes else [],
             "time_orientation": time_orientation,
         }
+        if reflection_id is not None and str(reflection_id).strip():
+            row["reflection_id"] = reflection_id.strip()
+        if recurring_phrases is not None:
+            row["recurring_phrases"] = recurring_phrases if isinstance(recurring_phrases, list) else []
+        if core_tension is not None and str(core_tension).strip():
+            row["core_tension"] = core_tension.strip()
+        if unresolved_threads is not None:
+            row["unresolved_threads"] = unresolved_threads if isinstance(unresolved_threads, list) else []
+        if self_beliefs is not None:
+            row["self_beliefs"] = self_beliefs if isinstance(self_beliefs, list) else []
         response = client.table("reflection_patterns").insert(row).execute()
         if response.data and len(response.data) > 0:
             return response.data[0].get("id")
     except Exception as e:
         logger.exception("Supabase insert_reflection_pattern failed: %s", e)
     return None
+
+
+def update_reflection_pattern_reflection_id(pattern_id: str, reflection_id: str) -> bool:
+    """Set reflection_id on a reflection_pattern row after the reflection is inserted."""
+    if not pattern_id or not reflection_id:
+        return False
+    client = _get_client()
+    if not client:
+        return False
+    try:
+        client.table("reflection_patterns").update({"reflection_id": reflection_id.strip()}).eq("id", pattern_id.strip()).execute()
+        return True
+    except Exception as e:
+        logger.warning("Supabase update_reflection_pattern_reflection_id failed: %s", e)
+    return False
+
+
+def get_pattern_history_for_user(user_id: str, limit: int = 5) -> list[dict]:
+    """Fetch last N pattern rows for this user for personalization. Returns list of dicts with emotional_tone, themes, recurring_phrases, core_tension, unresolved_threads, self_beliefs."""
+    if not user_id or not str(user_id).strip():
+        return []
+    client = _get_client()
+    if not client:
+        return []
+    try:
+        response = (
+            client.table("reflection_patterns")
+            .select("emotional_tone,themes,recurring_phrases,core_tension,unresolved_threads,self_beliefs")
+            .eq("user_id", user_id.strip())
+            .order("created_at", desc=True)
+            .limit(limit)
+            .execute()
+        )
+        return response.data or []
+    except Exception as e:
+        logger.warning("Supabase get_pattern_history_for_user failed: %s", e)
+    return []
 
 
 def insert_reflection(
@@ -808,12 +863,11 @@ def delete_user_data(user_id: str, delete_auth_user: bool = True) -> bool:
             logger.exception("delete_user_data reflections: %s", e)
             return False
 
-        # 4. Delete orphaned reflection_patterns (optional but keeps DB clean)
-        if pattern_ids:
-            try:
-                client.table("reflection_patterns").delete().in_("id", pattern_ids).execute()
-            except Exception as e:
-                logger.warning("delete_user_data reflection_patterns: %s", e)
+        # 4. Delete reflection_patterns for this user (table has user_id)
+        try:
+            client.table("reflection_patterns").delete().eq("user_id", uid).execute()
+        except Exception as e:
+            logger.warning("delete_user_data reflection_patterns: %s", e)
 
         # 5. Saved reflections (user_identifier == user_id)
         try:

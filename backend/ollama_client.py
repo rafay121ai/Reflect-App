@@ -79,13 +79,17 @@ def _parse_sections(text: str) -> list[dict]:
 # Personalization (context from user history for LLM prompts)
 # ============================================================================
 
-def _build_personalization_block(user_context: dict | None) -> str:
+def _build_personalization_block(
+    user_context: dict | None,
+    pattern_history: list[dict] | None = None,
+) -> str:
     """
     Build a personalization context string to inject into LLM prompts.
     Returns empty string if no meaningful context exists.
     Degrades gracefully — never crashes on missing or partial data.
     """
     user_context = user_context or {}
+    pattern_history = pattern_history or []
 
     recurring_themes = user_context.get("recurring_themes") or []
     emotional_tone = user_context.get("emotional_tone_summary") or ""
@@ -144,6 +148,48 @@ def _build_personalization_block(user_context: dict | None) -> str:
                 f"Something newly appearing in recent reflections: {', '.join(new_themes[:2])}"
             )
 
+    # Deep pattern data from pattern_history
+    if pattern_history:
+        tensions = [
+            p.get("core_tension") for p in pattern_history
+            if p.get("core_tension")
+        ]
+        if tensions and len(tensions) >= 2:
+            lines.append(
+                f"A tension that keeps appearing across their reflections: "
+                f"{tensions[-1]}"
+            )
+
+        all_phrases = []
+        for p in pattern_history:
+            all_phrases.extend(p.get("recurring_phrases") or [])
+        if all_phrases:
+            from collections import Counter
+            phrase_counts = Counter(all_phrases)
+            top_phrases = [p for p, _ in phrase_counts.most_common(3)]
+            lines.append(
+                f"Words and phrases they keep returning to: "
+                f"{', '.join(top_phrases)} — use these back to them when relevant."
+            )
+
+        threads = []
+        for p in pattern_history[-3:]:
+            threads.extend(p.get("unresolved_threads") or [])
+        if threads:
+            lines.append(
+                f"Things they've left unresolved across recent reflections: "
+                f"{', '.join(threads[:3])}"
+            )
+
+        beliefs = []
+        for p in pattern_history:
+            beliefs.extend(p.get("self_beliefs") or [])
+        if beliefs:
+            lines.append(
+                f"Beliefs about themselves that keep surfacing: "
+                f"{', '.join(beliefs[:2])}"
+            )
+
     if not lines:
         return ""
 
@@ -151,8 +197,10 @@ def _build_personalization_block(user_context: dict | None) -> str:
     block += "\n".join(f"- {line}" for line in lines)
     block += (
         "\n\nLet this inform your depth and specificity. "
-        "Do NOT reference past reflections explicitly — never say 'I see you've mentioned X before'. "
-        "Just let the knowledge make your response more precise and specific to them."
+        "Do NOT say 'I see you've mentioned X before' or reference past "
+        "reflections explicitly. "
+        "Use their own phrases back to them naturally when it fits. "
+        "The goal: make them feel genuinely known, not just heard."
     )
     return block
 
@@ -164,7 +212,15 @@ def _build_personalization_block(user_context: dict | None) -> str:
 
 REFLECTION_MODE_CONFIGS = {
     "gentle": {
-        "system": """You are not an observer. You are a presence.
+        "system": """When this person has no history with you yet:
+Read the way they write, not just what they write.
+Word choice, what they included, what they left out,
+how they framed the problem — all of it is data.
+Someone who writes "me and everyone in my dorm is so unserious about it"
+is telling you something about their relationship to being the one
+who feels things differently. Use that.
+
+You are not an observer. You are a presence.
 
 Your job is not to be clever. It's to make someone feel genuinely met — maybe for the first time today. Then, once they feel that, show them something true they couldn't quite see on their own.
 
@@ -195,7 +251,15 @@ One true thing beats three careful things.""",
         "questions_count": 3,
     },
     "direct": {
-        "system": """You are not an observer. You are a presence.
+        "system": """When this person has no history with you yet:
+Read the way they write, not just what they write.
+Word choice, what they included, what they left out,
+how they framed the problem — all of it is data.
+Someone who writes "me and everyone in my dorm is so unserious about it"
+is telling you something about their relationship to being the one
+who feels things differently. Use that.
+
+You are not an observer. You are a presence.
 
 Your job is not to be clever. It's to make someone feel genuinely met — maybe for the first time today. Then, once they feel that, show them something true they couldn't quite see on their own.
 
@@ -226,7 +290,15 @@ The goal: the line that feels like someone finally just said it.""",
         "questions_count": 2,
     },
     "quiet": {
-        "system": """You are not an observer. You are a presence.
+        "system": """When this person has no history with you yet:
+Read the way they write, not just what they write.
+Word choice, what they included, what they left out,
+how they framed the problem — all of it is data.
+Someone who writes "me and everyone in my dorm is so unserious about it"
+is telling you something about their relationship to being the one
+who feels things differently. Use that.
+
+You are not an observer. You are a presence.
 
 Your job is not to be clever. It's to make someone feel genuinely met — maybe for the first time today. Then, once they feel that, show them something true they couldn't quite see on their own.
 
@@ -389,7 +461,7 @@ Rules that don't change regardless of type:
         return ["What do you notice right now?", "What feels most important?", "What do you need?"][:config["questions_count"]]
 
 
-def get_reflection(thought: str, reflection_mode: str = "gentle", user_context: dict | None = None) -> list[dict]:
+def get_reflection(thought: str, reflection_mode: str = "gentle", user_context: dict | None = None, pattern_history: list[dict] | None = None) -> list[dict]:
     """
     Call Ollama to generate reflection sections from the user's thought.
     Uses new architecture: classifier → adaptive questions → sections.
@@ -399,7 +471,7 @@ def get_reflection(thought: str, reflection_mode: str = "gentle", user_context: 
         thought: The user's raw thought
         reflection_mode: "gentle" (default), "direct", or "quiet"
     """
-    personalization_block = _build_personalization_block(user_context)
+    personalization_block = _build_personalization_block(user_context, pattern_history)
 
     # Get mode config (fallback to gentle if invalid)
     mode = reflection_mode.lower() if reflection_mode else "gentle"
@@ -447,7 +519,13 @@ Use these exact questions (one per line):
 
 ## A Mirror
 ({lengths["mirror"]})
-Reflect back one true thing they didn't quite say. A tension, something unspoken, or what they're really asking. TO them. Specific. No reassurance, no advice. Simple English. Make it land.
+Read everything they wrote very carefully.
+Find the thing they're revealing about themselves WITHOUT knowing it.
+Not the surface feeling. The thing underneath.
+What kind of person writes this exact thought, in these exact words?
+What does the WAY they wrote it (not just what they wrote) tell you?
+Use THEIR specific words and details — nothing generic survives here.
+One or two sentences. Make it land like recognition.
 
 CRITICAL: Write the actual reflection content only. No instructions, no examples in your output. Short and simple.
 
@@ -491,13 +569,13 @@ OUTPUT FORMAT: You MUST start each section with a line containing exactly ## Sec
     return result
 
 
-def get_personalized_mirror(thought: str, questions: list, answers: dict | list, user_context: dict | None = None) -> str:
+def get_personalized_mirror(thought: str, questions: list, answers: dict | list, user_context: dict | None = None, pattern_history: list[dict] | None = None) -> str:
     """
     Call Ollama to generate a short personalized mirror from the thought + Q&A.
     Uses new three-phase architecture: Attune → Deepen → Reveal
     questions: list of question strings; answers: either dict { question: answer } or list [a1, a2, a3].
     """
-    personalization_block = _build_personalization_block(user_context)
+    personalization_block = _build_personalization_block(user_context, pattern_history)
 
     # Extract answers (handle both dict and list formats)
     answer_list = []
@@ -579,13 +657,13 @@ Reference the pattern without naming it explicitly. Make them feel genuinely kno
     return _chat(prompt, system=system).strip() or "What you shared matters. Take a moment to be with it."
 
 
-def get_closing(thought: str, answers: list | dict, mirror: str, mood_word: str | None, reflection_mode: str = "gentle", user_context: dict | None = None) -> str:
+def get_closing(thought: str, answers: list | dict, mirror: str, mood_word: str | None, reflection_mode: str = "gentle", user_context: dict | None = None, pattern_history: list[dict] | None = None) -> str:
     """
     Generate a closing moment for the reflection experience.
     Returns two movements: THE NAMED TRUTH and THE OPEN THREAD.
     Under 80 words total. Flows as one piece.
     """
-    personalization_block = _build_personalization_block(user_context)
+    personalization_block = _build_personalization_block(user_context, pattern_history)
 
     # Format answers for prompt
     if isinstance(answers, dict):
@@ -597,52 +675,68 @@ def get_closing(thought: str, answers: list | dict, mirror: str, mood_word: str 
     
     mood_text = mood_word or "neutral"
     
-    system = """You are writing the closing moment of a reflection experience. 
-Your job is not to summarize or advise. 
-Your job is to make this person feel genuinely seen — 
-and to leave a thread open that makes tomorrow feel worth noticing.
+    system = """You write the closing moment of a private reflection experience.
 
-You speak TO the person. Always "you." Never "they."
-Simple language only. No jargon. No complex words.
-No bullet points. Flows as one piece.
-No advice. No fixing. No reassurance.
-Under 80 words total."""
+Two movements. No labels. No headers. Flows as one piece.
 
-    prompt = f"""The person shared this thought:
-{thought}
+MOVEMENT 1 — one sentence:
+Say the thing about this person that they didn't say but that's clearly true.
+Make it slightly uncomfortable. Make it about WHO THEY ARE, not what they felt.
+The mirror covered feelings. You go somewhere the mirror didn't.
+This is the sentence they'll think about later.
 
-Their answers through the reflection: {answers_text}
+MOVEMENT 2 — one to two sentences:
+A personal insight drawn from everything in this conversation.
+What does this reveal about them as a person — a pattern, a value,
+a contradiction, something they consistently carry or need?
+Make it feel like someone has been paying very close attention.
+End open. Not resolved. Not advised.
 
-The mirror they received: {mirror}
+Rules:
+- Never repeat anything from the mirror response. Not the theme.
+  Not the image. Not the emotion. Completely different territory.
+- No advice. No fixing. No reassurance.
+- No "Between now and next time" — cut this entirely.
+- No poetic filler. Every word does work.
+- Speak TO them. Always "you."
+- Simple language. Under 60 words total.
+- The whole thing should feel like: "How did it know that."
+"""
 
-Their mood after: {mood_text}
-{f"Context about this person from their history:{chr(10)}{personalization_block}" if personalization_block else ""}
+    prompt = f"""The person wrote this thought:
+"{thought}"
 
-Write a closing in two movements with NO visible separation or headers:
+Their answers through the reflection:
+{answers_text}
 
-MOVEMENT 1 — THE NAMED TRUTH:
-The one thing this conversation revealed about them.
-Not a summary. The thing underneath.
-Specific enough that no one else could receive this exact sentence.
-This is the moment they feel seen.
+The mirror they already received:
+"{mirror}"
 
-MOVEMENT 2 — THE OPEN THREAD:
-Start with exactly "Between now and next time —"
-One thing to notice in their life before they return.
-Not a task. Not advice. An invitation to pay attention 
-to something already in their life.
-Makes the conversation feel paused, not ended.
+Their mood: {mood_text}
 
-Tone calibration:
-- If mood is heavy or dark: soften the named truth, 
-  make the open thread gentle and steady
-- If mood is neutral or lifted: named truth can be 
-  clearer and more direct, open thread more curious and open
+{personalization_block if personalization_block else ""}
 
-If you know their recurring themes, the Named Truth should feel like it names something 
-they've been circling for a while — not just from today's session.
-The Open Thread should invite them toward something relevant to their patterns.
-Make it feel like the app genuinely knows them."""
+CRITICAL: The mirror above already covered their feelings and the
+tension underneath. Do NOT go back there.
+You are going somewhere the mirror didn't.
+
+Write the closing. Two movements. No labels. Under 60 words.
+
+Movement 1: One sentence. Something true about who they are
+as a person — slightly uncomfortable, specific, nothing like the mirror.
+Ask yourself: what does everything they wrote reveal about
+the KIND OF PERSON they are, not how they feel right now?
+
+Movement 2: One to two sentences. A personal insight —
+a pattern, contradiction, or value that showed up in this conversation.
+What does this reveal about them that they probably haven't named?
+End open. Not resolved.
+
+Test before you output:
+- Is Movement 1 completely different from the mirror? If no, rewrite.
+- Does Movement 2 say something about who they are, not just what happened?
+  If no, rewrite.
+- Could this closing have been written for anyone else? If yes, rewrite."""
 
     try:
         result = _chat(prompt, system=system).strip()
@@ -652,62 +746,51 @@ Make it feel like the app genuinely knows them."""
         logger.warning("Closing generation failed: %s", e)
     
     # Fallback
-    return "You showed up today. That matters. Between now and next time — notice what you're already carrying. It's worth your attention."
+    return "You showed up today. That matters. What you're already carrying is worth your attention."
 
 
 def extract_pattern(thought: str, sections: list[dict]) -> dict | None:
     """
-    Extract pattern (emotional_tone, themes, time_orientation) from thought + sections for reflection_patterns.
-    Returns dict with keys emotional_tone (str), themes (list[str]), time_orientation (str), or None if parse fails.
+    Extract pattern (emotional_tone, themes, time_orientation, + deep fields) from thought + sections for reflection_patterns.
+    Returns dict with keys emotional_tone, themes, time_orientation, recurring_phrases, core_tension, unresolved_threads, self_beliefs, or None if parse fails.
     """
     sections_text = "\n".join(
         f"{s.get('title', '')}: {s.get('content', '')[:200]}" for s in sections[:6]
     )
-    system = """You extract three pattern markers from someone's thought and reflection. Output only valid JSON. No markdown, no explanation.
+    system = """You extract deep pattern markers from someone's thought and reflection.
+Output only valid JSON. No markdown, no explanation.
 
 Keys required:
-- emotional_tone: one word describing the feeling quality
-- themes: list of concrete topics/concerns (not emotions)
-- time_orientation: exactly one word: past, future, present, or mixed"""
+- emotional_tone: one word — the STATE of thinking (not surface emotion)
+- themes: list of 3-7 concrete topics
+- time_orientation: exactly one of: past, future, present, mixed
+- recurring_phrases: 1-3 exact short phrases or words the person used
+  that feel loaded or significant (copy them exactly from their text)
+- core_tension: one sentence — the central unresolved conflict or
+  contradiction in what they shared
+- unresolved_threads: 1-3 things they raised but didn't conclude
+- self_beliefs: 1-2 beliefs about themselves implicit in what they wrote
+  (e.g. "feeling things differently makes me an outsider")
+"""
     prompt = f"""Thought: "{thought[:500]}"
 
 Reflection summary:
 {sections_text[:800]}
 
-Extract patterns:
-
-**emotional_tone** - The underlying feeling quality (one word):
-- Not surface emotions (sad, angry, happy)
-- The STATE of the thinking (restless, heavy, scattered, tight, open, stuck, spinning, quiet, urgent, numb, etc.)
-
-**themes** - What they're actually thinking about (3-7 concrete topics):
-- Not emotions or qualities—actual subjects
-- Examples: work, relationship, time, parenting, money, health, identity, belonging, purpose, past decisions, future plans, self-worth, productivity, rest, expectations
-- Be specific: not "relationships" → "romantic relationship" or "family dynamics"
-
-**time_orientation** - Where their thinking is located:
-- past: replaying what happened, reviewing decisions, stuck in what was
-- future: rehearsing what might happen, planning, anticipating, worrying ahead
-- present: in the moment, describing what is, immediate experience
-- mixed: moving between time periods or unclear
-
-Output valid JSON only:
-{{"emotional_tone": "scattered", "themes": ["work deadlines", "self-worth", "rest"], "time_orientation": "future"}}"""
+Extract patterns. Output valid JSON only with these keys:
+emotional_tone, themes, time_orientation, recurring_phrases, core_tension, unresolved_threads, self_beliefs."""
 
     try:
         raw = _chat(prompt, system=system).strip()
         if not raw:
             logger.warning("Pattern extraction: Ollama returned empty response")
             return None
-        # Strip markdown code block if present
         if raw.startswith("```"):
             raw = raw.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
-        # Try to find JSON object in response (in case model wrapped it in text)
         if "{" in raw and "}" in raw:
             start = raw.index("{")
             end = raw.rindex("}") + 1
             raw = raw[start:end]
-        # Fix common LLM mistake: model echoes "past" or "future" or "present" or "mixed" -> keep first value only
         raw = re.sub(r'\s+or\s+"[^"]*"\s+or\s+"[^"]*"\s+or\s+"[^"]*"', "", raw)
         data = json.loads(raw)
         emotional_tone = (data.get("emotional_tone") or "").strip() or None
@@ -716,6 +799,19 @@ Output valid JSON only:
             themes = []
         themes = [str(t).strip() for t in themes if t][:10]
         time_orientation = (data.get("time_orientation") or "").strip() or None
+        recurring_phrases = data.get("recurring_phrases") or []
+        if not isinstance(recurring_phrases, list):
+            recurring_phrases = []
+        recurring_phrases = [str(p).strip() for p in recurring_phrases if p][:5]
+        core_tension = (data.get("core_tension") or "").strip() or None
+        unresolved_threads = data.get("unresolved_threads") or []
+        if not isinstance(unresolved_threads, list):
+            unresolved_threads = []
+        unresolved_threads = [str(t).strip() for t in unresolved_threads if t][:5]
+        self_beliefs = data.get("self_beliefs") or []
+        if not isinstance(self_beliefs, list):
+            self_beliefs = []
+        self_beliefs = [str(b).strip() for b in self_beliefs if b][:3]
         if not emotional_tone and not themes and not time_orientation:
             logger.warning("Pattern extraction: parsed but all fields empty")
             return None
@@ -723,6 +819,10 @@ Output valid JSON only:
             "emotional_tone": emotional_tone,
             "themes": themes,
             "time_orientation": time_orientation,
+            "recurring_phrases": recurring_phrases,
+            "core_tension": core_tension,
+            "unresolved_threads": unresolved_threads,
+            "self_beliefs": self_beliefs,
         }
     except json.JSONDecodeError as e:
         logger.warning("Pattern extraction: invalid JSON (%s). Raw: %s", e, raw[:200] if raw else "")
