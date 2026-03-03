@@ -89,18 +89,23 @@ def _get_supabase_client():
 
 
 def is_duplicate_event(event_id: str) -> bool:
-    """Returns True if this event_id has already been processed."""
+    """
+    Returns True if this event has already been processed.
+    Fails CLOSED — if we cannot verify, treat as duplicate
+    to prevent replay attacks.
+    """
     if not event_id:
         return False
-    client = _get_supabase_client()
-    if not client:
-        return False
     try:
+        client = _get_supabase_client()
+        if not client:
+            logger.warning("is_duplicate_event: no supabase client — failing closed")
+            return True  # fail closed
         result = client.table("webhook_events").select("id").eq("event_id", event_id).limit(1).execute()
         return bool(result.data)
-    except Exception:
-        # Fail open: if dedup check fails, process event anyway
-        return False
+    except Exception as e:
+        logger.warning("is_duplicate_event check failed (%s) — failing closed", type(e).__name__)
+        return True  # fail closed on any error
 
 
 def record_event(event_id: str, event_name: str) -> None:

@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "../lib/supabase";
-import { getGuestReflections, clearGuestSession } from "../lib/guestSession";
+import { getGuestReflections, getGuestId, clearGuestSession } from "../lib/guestSession";
 import { getBackendUrl } from "../lib/config";
 
 const API_BASE = `${getBackendUrl()}/api`;
@@ -31,15 +31,19 @@ export default function AuthCallback() {
 
         if (isNewTrialUser) {
           try {
+            const guestId = getGuestId() || "";
             const guestReflections = getGuestReflections();
-            if (guestReflections.length > 0) {
+            if (guestReflections.length > 0 || guestId) {
               await fetch(`${API_BASE}/migrate-guest-reflections`, {
                 method: "POST",
                 headers: {
                   "Content-Type": "application/json",
                   Authorization: `Bearer ${session.access_token}`,
                 },
-                body: JSON.stringify({ reflections: guestReflections }),
+                body: JSON.stringify({
+                  guest_id: guestId,
+                  reflections: guestReflections,
+                }),
               }).catch(() => {});
               clearGuestSession();
             }

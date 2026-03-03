@@ -79,10 +79,16 @@ from supabase_client import (
     refresh_personalization_context_all,
     get_user_usage,
     ensure_user_usage_row,
+    update_profile_plan,
+    count_guest_reflections_by_guest_id,
+    insert_guest_reflection,
+    migrate_guest_reflections_to_user,
+    delete_orphaned_guest_reflections_older_than,
 )
 
 # So Supabase and Ollama client warnings/errors show in the uvicorn terminal
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
+logger = logging.getLogger(__name__)
 logging.getLogger("supabase_client").setLevel(logging.WARNING)
 logging.getLogger("ollama_client").setLevel(logging.WARNING)
 
@@ -110,8 +116,17 @@ def _run_personalization_refresh_all():
                 n = len(refresh_personalization_context_all(limit_users=200))
                 logging.info("Personalization refresh: updated %d users", n)
         except Exception as e:
-            logging.warning("Personalization refresh failed: %s", e)
+            logging.warning("Personalization refresh failed: %s", type(e).__name__)
         time.sleep(interval_sec)
+
+
+def _server_error(e: Exception, context: str = "") -> HTTPException:
+    """Log the real error server-side, return opaque message to client."""
+    logger.exception("Server error%s: %s", f" [{context}]" if context else "", type(e).__name__)
+    return HTTPException(
+        status_code=500,
+        detail="Something went wrong. Please try again later.",
+    )
 
 
 def _require_env(name: str, value: str | None) -> None:
@@ -232,9 +247,9 @@ class ReflectRequest(BaseModel):
 
 class MirrorRequest(BaseModel):
     thought: str = Field(..., max_length=5000)
-    questions: list[str]  # max 10 items, each validated by length in practice
-    answers: dict | list  # dict keyed by question or index, or list of 3 answers
-    reflection_id: str | None = Field(default=None, max_length=100)  # if set, we update this row in Supabase with Q&A + mirror
+    questions: list[str] = Field(..., max_length=20)
+    answers: dict | list
+    reflection_id: str | None = Field(default=None, max_length=100)
 
 
 class MoodRequest(BaseModel):
@@ -246,10 +261,10 @@ class MoodRequest(BaseModel):
 class SaveHistoryRequest(BaseModel):
     user_identifier: str = Field(..., max_length=256)
     raw_text: str = Field(..., max_length=50000)
-    answers: list[dict]  # e.g. [{"question": "...", "response": "..."}]
+    answers: list[dict] = Field(..., max_length=100)
     mirror_response: str = Field(..., max_length=50000)
     mood_word: str | None = None
-    revisit_type: str | None = None  # 'come_back' | 'remind' for "to return" styling
+    revisit_type: str | None = None
 
 
 class OpenLaterRequest(BaseModel):
@@ -273,11 +288,11 @@ class RemindRequest(BaseModel):
 
 class ClosingRequest(BaseModel):
     thought: str = Field(..., max_length=5000)
-    answers: dict | list  # dict keyed by question or index, or list of answers
+    answers: dict | list = Field(..., max_length=100)
     mirror_response: str = Field(..., max_length=3000)
     mood_word: str | None = Field(default=None, max_length=200)
-    reflection_id: str | None = Field(default=None, max_length=100)  # if set, we update this row in Supabase with closing_text
-    reflection_mode: str | None = Field(default="gentle", max_length=50)  # "gentle" | "direct" | "quiet"
+    reflection_id: str | None = Field(default=None, max_length=100)
+    reflection_mode: str | None = Field(default="gentle", max_length=50)
 
 
 class GuestReflection(BaseModel):
@@ -289,7 +304,17 @@ class GuestReflection(BaseModel):
 
 
 class MigrateGuestRequest(BaseModel):
+    guest_id: str = Field("", max_length=100)
     reflections: list[GuestReflection] = Field(default_factory=list, max_items=2)
+
+
+class GuestSaveRequest(BaseModel):
+    guest_id: str = Field(..., min_length=10, max_length=100)
+    thought: str = Field(..., max_length=5000)
+    sections: list[dict] = Field(..., max_items=10)
+    mirror: str = Field("", max_length=3000)
+    mood_word: str = Field("", max_length=100)
+    closing: str = Field("", max_length=2000)
 
 
 @app.get("/")
@@ -314,6 +339,19 @@ def health():
     }
 
 
+@app.get("/api/health/llm")
+def health_llm():
+    """Optional health check that verifies LLM connectivity. Use for monitoring."""
+    try:
+        from llm_provider import llm_chat
+        response = llm_chat("Say exactly: ok", system="Reply with exactly: ok")
+        ok = response and "ok" in (response or "").strip().lower()[:10]
+        return {"status": "ok" if ok else "unexpected", "llm": "ok" if ok else "unexpected_response"}
+    except Exception as e:
+        logging.warning("Health LLM check failed: %s", type(e).__name__)
+        return {"status": "unavailable", "llm": "error"}
+
+
 @app.get("/api/reflections/{reflection_id}")
 def get_reflection_route(reflection_id: str, user_id: str = Depends(require_user_id)):
     """Get one reflection by id (for opening from notification or 'come back later'). Returns only if owned by current user."""
@@ -329,7 +367,7 @@ def get_reflection_route(reflection_id: str, user_id: str = Depends(require_user
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise _server_error(e, "get_reflection_route")
 
 
 @app.get("/api/reminders/due")
@@ -341,7 +379,7 @@ def reminders_due(user_id: str = Depends(require_user_id)):
         reminders = [m for m in all_due if (m.get("reflection_id") or "") in user_reflection_ids]
         return {"reminders": reminders}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise _server_error(e, "reminders_due")
 
 
 def _llm_error_message(e: Exception) -> str:
@@ -354,6 +392,24 @@ def _llm_error_message(e: Exception) -> str:
     if "not found" in err or "404" in err:
         return "Ollama model not found. Run: ollama run qwen"
     return f"Reflection service error: {e}"
+
+
+def _activate_trial_if_new(user_id: str) -> None:
+    """
+    Activate 7-day trial for brand new users. Idempotent.
+    Also syncs profiles.plan_type to 'trial'.
+    """
+    try:
+        usage = get_user_usage(user_id)
+        if usage:
+            current_plan = (usage.get("plan_type") or "trial").strip().lower()
+            update_profile_plan(user_id, current_plan)
+            return
+        now_iso = datetime.now(timezone.utc).isoformat()
+        ensure_user_usage_row(user_id, "trial", now_iso, trial_start=now_iso)
+        update_profile_plan(user_id, "trial")
+    except Exception as e:
+        logger.warning("_activate_trial_if_new failed: %s", type(e).__name__)
 
 
 def _do_reflect(body: ReflectRequest, user_id: str | None = None, background_tasks: BackgroundTasks | None = None):
@@ -413,7 +469,7 @@ def _do_reflect(body: ReflectRequest, user_id: str | None = None, background_tas
             rc = get_rc_subscription_status(user_id)
             plan_type = (rc.get("plan_type") or "trial").strip().lower()
             rollback_reflection_usage(user_id, plan_type)
-        logging.exception("Reflect failed: %s", e)
+        logging.exception("Reflect failed: %s", type(e).__name__)
         raise HTTPException(status_code=502, detail=_llm_error_message(e))
 
 
@@ -487,46 +543,72 @@ def reflect_guest(request: Request, body: ReflectRequest, background_tasks: Back
     return _do_reflect(body, user_id=None, background_tasks=None)
 
 
-@app.post("/api/migrate-guest-reflections")
-def migrate_guest_reflections(body: MigrateGuestRequest, user_id: str = Depends(require_user_id)):
+@app.post("/api/reflect/guest-save")
+@limiter.limit("5/minute")
+def save_guest_reflection_route(request: Request, body: GuestSaveRequest):
     """
-    Migrate up to 2 guest reflections from localStorage into saved_reflections for this user
-    and ensure a trial usage row exists.
+    Save a completed guest reflection to DB using guest_id.
+    No auth. Max 2 guest reflections per guest_id enforced here.
     """
-    refs = body.reflections or []
-    if not refs:
-        return {"migrated": 0}
-
-    migrated = 0
-    for ref in refs[:2]:
-        try:
-            raw_text = (ref.thought or "").strip()
-            mirror_text = (ref.mirror or "").strip()
-            mood_word = (ref.mood or "").strip() or None
-            if not raw_text and not mirror_text:
-                continue
-            inserted_id = insert_saved_reflection(
-                user_identifier=user_id,
-                raw_text=raw_text,
-                answers=[],
-                mirror_response=mirror_text,
-                mood_word=mood_word,
-                revisit_type=None,
-            )
-            if inserted_id:
-                migrated += 1
-        except Exception as e:
-            logging.warning("migrate_guest_reflections insert failed for %s: %s", user_id, e)
-
-    # Activate trial if this user has no usage row yet
+    guest_id = body.guest_id.strip()
+    if count_guest_reflections_by_guest_id(guest_id) >= 2:
+        raise HTTPException(status_code=429, detail="Guest reflection limit reached")
     try:
-        usage = get_user_usage(user_id)
-        if not usage:
-            now_iso = datetime.now(timezone.utc).isoformat()
-            ensure_user_usage_row(user_id, "trial", now_iso, trial_start=now_iso)
+        rid = insert_guest_reflection(
+            guest_id=guest_id,
+            thought=body.thought,
+            sections=body.sections,
+            personalized_mirror=body.mirror or "",
+            closing_text=(body.closing or "").strip() or None,
+        )
+        if not rid:
+            raise _server_error(Exception("Insert returned None"), "guest-save-insert")
+        return {"id": rid, "guest_id": guest_id}
+    except HTTPException:
+        raise
     except Exception as e:
-        logging.warning("migrate_guest_reflections trial activation failed for %s: %s", user_id, e)
+        raise _server_error(e, "guest-save-insert")
 
+
+@app.post("/api/migrate-guest-reflections")
+@limiter.limit("5/minute")
+def migrate_guest_reflections(request: Request, body: MigrateGuestRequest, user_id: str = Depends(require_user_id)):
+    """
+    Migrate guest reflections to authenticated user.
+    Path 1: by guest_id from DB. Path 2: fallback to body.reflections (localStorage).
+    Idempotent. Activates trial if new user.
+    """
+    migrated = 0
+    if body.guest_id and body.guest_id.strip():
+        try:
+            migrated = migrate_guest_reflections_to_user(body.guest_id.strip(), user_id)
+        except Exception as e:
+            logger.warning("Guest DB migration failed: %s", type(e).__name__)
+    if migrated == 0 and body.reflections:
+        refs = body.reflections[:2]
+        for ref in refs:
+            try:
+                raw_text = (ref.thought or "").strip()
+                mirror_text = (ref.mirror or "").strip()
+                mood_word = (ref.mood or "").strip() or None
+                if not raw_text and not mirror_text:
+                    continue
+                inserted_id = insert_saved_reflection(
+                    user_identifier=user_id,
+                    raw_text=raw_text,
+                    answers=[],
+                    mirror_response=mirror_text,
+                    mood_word=mood_word,
+                    revisit_type=None,
+                )
+                if inserted_id:
+                    migrated += 1
+            except Exception as e:
+                logger.warning("migrate_guest_reflections insert failed for %s: %s", user_id, type(e).__name__)
+    try:
+        _activate_trial_if_new(user_id)
+    except Exception as e:
+        logger.warning("Trial activation failed: %s", type(e).__name__)
     return {"migrated": migrated}
 
 
@@ -537,6 +619,10 @@ def mirror_personalized(request: Request, body: MirrorRequest, user_id: str = De
         raise HTTPException(status_code=400, detail="thought is required")
     user_context = get_personalization_context(user_id) or {}
     pattern_history_data = get_pattern_history_for_user(user_id, 5) or []
+    if body.reflection_id:
+        ref_row = get_reflection_by_id(body.reflection_id.strip())
+        if not ref_row or (ref_row.get("user_id") or "").strip() != user_id:
+            raise HTTPException(status_code=404, detail="Reflection not found")
     try:
         thought = body.thought.strip()
         safe_thought = sanitize_for_llm(thought)
@@ -576,6 +662,10 @@ def closing(request: Request, body: ClosingRequest, user_id: str = Depends(requi
         raise HTTPException(status_code=400, detail="mirror_response is required")
     user_context = get_personalization_context(user_id) or {}
     pattern_history_data = get_pattern_history_for_user(user_id, 5) or []
+    if body.reflection_id:
+        ref_row = get_reflection_by_id(body.reflection_id.strip())
+        if not ref_row or (ref_row.get("user_id") or "").strip() != user_id:
+            raise HTTPException(status_code=404, detail="Reflection not found")
     try:
         thought = body.thought.strip()
         safe_thought = sanitize_for_llm(thought)
@@ -590,7 +680,7 @@ def closing(request: Request, body: ClosingRequest, user_id: str = Depends(requi
         
         return {"closing_text": closing_text}
     except Exception as e:
-        logging.exception("Closing generation failed: %s", e)
+        logging.exception("Closing generation failed: %s", type(e).__name__)
         raise HTTPException(status_code=502, detail=f"Closing generation error: {e}")
 
 
@@ -611,7 +701,7 @@ def closing_guest(request: Request, body: ClosingRequest):
         closing_text = get_closing(safe_thought, body.answers, mirror, mood_word, mode, user_context={})
         return {"closing_text": closing_text}
     except Exception as e:
-        logging.exception("Closing generation failed: %s", e)
+        logging.exception("Closing generation failed: %s", type(e).__name__)
         raise HTTPException(status_code=502, detail=f"Closing generation error: {e}")
 
 
@@ -622,11 +712,13 @@ def remind(request: Request, body: RemindRequest, user_id: str = Depends(require
     if not (body.reflection_id or "").strip():
         raise HTTPException(status_code=400, detail="reflection_id is required")
     days = max(1, min(7, body.days))  # clamp 1–7
+    reflection = get_reflection_by_id(body.reflection_id.strip())
+    if not reflection or (reflection.get("user_id") or "").strip() != user_id:
+        raise HTTPException(status_code=404, detail="Reflection not found")
     remind_at = datetime.now(timezone.utc) + timedelta(days=days)
     remind_at_iso = remind_at.isoformat()
     message = None
     try:
-        reflection = get_reflection_by_id(body.reflection_id.strip())
         thought = (reflection.get("thought") or "").strip() if reflection else None
         mirror = (reflection.get("personalized_mirror") or "").strip() if reflection else None
         mirror_snippet = mirror[:200] if mirror else None
@@ -634,12 +726,12 @@ def remind(request: Request, body: RemindRequest, user_id: str = Depends(require
         safe_mirror = sanitize_for_llm(mirror_snippet or "")
         message = get_reminder_message(thought=safe_thought, mirror_snippet=safe_mirror)
     except Exception as e:
-        logging.warning("Reminder message generation failed, using fallback: %s", e)
+        logging.warning("Reminder message generation failed, using fallback: %s", type(e).__name__)
     try:
         reminder_id = insert_revisit_reminder(body.reflection_id.strip(), remind_at_iso, message=message)
         return {"id": reminder_id, "remind_at": remind_at_iso, "message": message or None}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise _server_error(e, "remind")
 
 
 @app.delete("/api/reminders/{reminder_id}")
@@ -661,7 +753,7 @@ def reminder_delete(reminder_id: str, user_id: str = Depends(require_user_id)):
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise _server_error(e, "reminder_delete")
 
 
 @app.post("/api/mood/suggest")
@@ -697,6 +789,9 @@ def mood(body: MoodRequest, user_id: str = Depends(require_user_id)):
         raise HTTPException(status_code=400, detail="word_or_phrase is required")
     if not (body.reflection_id or "").strip():
         raise HTTPException(status_code=400, detail="reflection_id is required")
+    ref_row = get_reflection_by_id(body.reflection_id.strip())
+    if not ref_row or (ref_row.get("user_id") or "").strip() != user_id:
+        raise HTTPException(status_code=404, detail="Reflection not found")
     try:
         description = (body.description or "").strip() or None
         checkin_id = insert_mood_checkin(
@@ -706,7 +801,7 @@ def mood(body: MoodRequest, user_id: str = Depends(require_user_id)):
         )
         return {"id": checkin_id}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise _server_error(e, "mood")
 
 
 # ----- Saved reflections (history + open later) -----
@@ -733,7 +828,7 @@ def history_save(body: SaveHistoryRequest, background_tasks: BackgroundTasks, us
         background_tasks.add_task(refresh_personalization_context_for_user, user_id)
         return {"id": saved_id}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise _server_error(e, "history_save")
 
 
 @app.get("/api/history/waiting")
@@ -743,7 +838,7 @@ def history_waiting(user_id: str = Depends(require_user_id)):
         items = list_saved_reflections_waiting(user_id)
         return {"items": items}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise _server_error(e, "history_waiting")
 
 
 @app.get("/api/history")
@@ -753,7 +848,7 @@ def history_all(user_id: str = Depends(require_user_id)):
         items = list_saved_reflections_all(user_id)
         return {"items": items}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise _server_error(e, "history_all")
 
 
 @app.get("/api/history/{saved_id}")
@@ -769,7 +864,7 @@ def history_get_one(saved_id: str, user_id: str = Depends(require_user_id)):
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise _server_error(e, "history_get_one")
 
 
 def _check_saved_reflection_owner(saved_id: str, user_id: str) -> None:
@@ -790,7 +885,7 @@ def history_open_later(saved_id: str, body: OpenLaterRequest, user_id: str = Dep
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise _server_error(e, "history_open_later")
 
 
 @app.patch("/api/history/{saved_id}/remove-open-later")
@@ -805,7 +900,7 @@ def history_remove_open_later(saved_id: str, user_id: str = Depends(require_user
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise _server_error(e, "history_remove_open_later")
 
 
 @app.patch("/api/history/{saved_id}/mark-opened")
@@ -820,7 +915,7 @@ def history_mark_opened(saved_id: str, user_id: str = Depends(require_user_id)):
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise _server_error(e, "history_mark_opened")
 
 
 # ----- User profile (name, email, preferences for personalization) -----
@@ -941,24 +1036,41 @@ def personalization_refresh(user_id: str = Depends(require_user_id)):
 @app.post("/api/personalization/refresh-all")
 def personalization_refresh_all(
     x_cron_secret: str | None = Header(None, alias="X-Cron-Secret"),
-    secret: str | None = None,
 ):
     """
     Refresh personalization context for all users with saved_reflections. For cron jobs.
-    Requires PERSONALIZATION_CRON_SECRET in env; send it in header X-Cron-Secret or query ?secret=.
+    Requires PERSONALIZATION_CRON_SECRET in env; send it in header X-Cron-Secret only (not in query string).
     """
     expected = os.getenv("PERSONALIZATION_CRON_SECRET", "").strip()
     if not expected:
         raise HTTPException(status_code=503, detail="PERSONALIZATION_CRON_SECRET not configured")
-    token = (x_cron_secret or secret or "").strip()
+    token = (x_cron_secret or "").strip()
     if token != expected:
         raise HTTPException(status_code=403, detail="Invalid or missing secret")
     try:
         updated = refresh_personalization_context_all(limit_users=200)
         return {"updated": len(updated), "user_ids": updated}
     except Exception as e:
-        logging.exception("Refresh all personalization failed: %s", e)
-        raise HTTPException(status_code=500, detail=str(e))
+        logging.exception("Refresh all personalization failed: %s", type(e).__name__)
+        raise _server_error(e, "personalization_refresh_all")
+
+
+@app.delete("/api/admin/cleanup-guest-reflections")
+@limiter.limit("10/minute")
+def cleanup_guest_reflections(
+    request: Request,
+    x_cron_secret: str | None = Header(None, alias="X-Cron-Secret"),
+):
+    """Remove guest reflections older than 7 days that were never migrated."""
+    expected = os.getenv("CRON_SECRET", "")
+    if not expected or (x_cron_secret or "") != expected:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    try:
+        deleted = delete_orphaned_guest_reflections_older_than(7)
+        logger.info("Cleaned up %d orphaned guest reflections", deleted)
+        return {"deleted": deleted}
+    except Exception as e:
+        raise _server_error(e, "cleanup-guest-reflections")
 
 
 # ----- Insights (optional, user-initiated) -----
@@ -1112,8 +1224,8 @@ def insights_letter(user_id: str = Depends(require_user_id)):
     except HTTPException:
         raise
     except Exception as e:
-        logging.exception("Insights letter failed: %s", e)
-        raise HTTPException(status_code=500, detail=str(e))
+        logging.exception("Insights letter failed: %s", type(e).__name__)
+        raise _server_error(e, "insights_letter")
 
 
 # Keep /api/insights/weekly as alias for backwards compatibility
@@ -1169,8 +1281,8 @@ def insights_generate_letter(user_id: str = Depends(require_user_id)):
     except HTTPException:
         raise
     except Exception as e:
-        logging.exception("Insights generate-letter failed: %s", e)
-        raise HTTPException(status_code=500, detail=str(e))
+        logging.exception("Insights generate-letter failed: %s", type(e).__name__)
+        raise _server_error(e, "insights_generate_letter")
 
 
 @app.get("/api/insights/reflection-frequency")
@@ -1210,8 +1322,8 @@ def insights_reflection_frequency(user_id: str = Depends(require_user_id), week_
     except HTTPException:
         raise
     except Exception as e:
-        logging.exception("Insights reflection-frequency failed: %s", e)
-        raise HTTPException(status_code=500, detail=str(e))
+        logging.exception("Insights reflection-frequency failed: %s", type(e).__name__)
+        raise _server_error(e, "insights_reflection_frequency")
 
 
 @app.get("/api/insights/mood-language")
@@ -1235,8 +1347,8 @@ def insights_mood_language(user_id: str = Depends(require_user_id), days: int = 
     except HTTPException:
         raise
     except Exception as e:
-        logging.exception("Insights mood-language failed: %s", e)
-        raise HTTPException(status_code=500, detail=str(e))
+        logging.exception("Insights mood-language failed: %s", type(e).__name__)
+        raise _server_error(e, "insights_mood_language")
 
 
 @app.get("/api/insights/mood-over-time")
@@ -1287,5 +1399,5 @@ def insights_mood_over_time(user_id: str = Depends(require_user_id), days: int =
     except HTTPException:
         raise
     except Exception as e:
-        logging.exception("Insights mood-over-time failed: %s", e)
-        raise HTTPException(status_code=500, detail=str(e))
+        logging.exception("Insights mood-over-time failed: %s", type(e).__name__)
+        raise _server_error(e, "insights_mood_over_time")

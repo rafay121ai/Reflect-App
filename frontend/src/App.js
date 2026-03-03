@@ -25,7 +25,7 @@ import TrialExpiredModal from "./components/TrialExpiredModal";
 import { BookOpen, Settings } from "lucide-react";
 import { supabase } from "./lib/supabase";
 import { getBackendUrl } from "./lib/config";
-import { getGuestCount, saveGuestReflection, GUEST_MAX_REFLECTIONS } from "./lib/guestSession";
+import { getGuestCount, saveGuestReflection, saveGuestReflectionToDb, getOrCreateGuestId, getGuestId, GUEST_MAX_REFLECTIONS } from "./lib/guestSession";
 import { Analytics } from "@vercel/analytics/react";
 
 const BACKEND_URL = getBackendUrl();
@@ -940,11 +940,20 @@ function App() {
                 user
                   ? undefined
                   : (data) => {
+                      const payload = {
+                        thought: data.thought,
+                        mirror: data.mirror,
+                        mood: data.mood,
+                        closing: data.closing,
+                        sections: reflection?.sections ?? [],
+                      };
+                      saveGuestReflectionToDb(API, payload).catch(() => {});
                       const count = saveGuestReflection({
                         thought: data.thought,
                         mirror: data.mirror,
                         mood: data.mood,
                         closing: data.closing,
+                        created_at: new Date().toISOString(),
                       });
                       if (count === 1) {
                         setGuestSignupStage("soft");

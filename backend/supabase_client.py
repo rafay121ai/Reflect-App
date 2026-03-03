@@ -64,8 +64,12 @@ def get_user_usage(user_id: str) -> dict | None:
 def update_user_plan(user_id: str, plan_type: str) -> bool:
     """
     Set or update user_usage plan (e.g. from Lemon Squeezy webhook).
-    Upserts user_usage with plan_type, reflections_used=0, period_start=now() UTC.
+    Also syncs profiles.plan_type for display/reference.
     """
+    valid_plans = {"guest", "trial", "monthly", "yearly"}
+    plan_type = (plan_type or "trial").strip().lower()
+    if plan_type not in valid_plans:
+        plan_type = "trial"
     if not user_id or not str(user_id).strip():
         return False
     client = _get_client()
@@ -76,16 +80,38 @@ def update_user_plan(user_id: str, plan_type: str) -> bool:
         now_iso = datetime.now(timezone.utc).isoformat()
         row = {
             "user_id": user_id.strip(),
-            "plan_type": plan_type.strip().lower() or "trial",
+            "plan_type": plan_type,
             "period_start": now_iso,
             "reflections_used": 0,
             "updated_at": now_iso,
         }
         client.table("user_usage").upsert(row, on_conflict="user_id").execute()
+        update_profile_plan(user_id, plan_type)
         return True
     except Exception as e:
         logger.exception("Supabase update_user_plan failed: %s", e)
         return False
+
+
+def update_profile_plan(user_id: str, plan_type: str) -> None:
+    """Keep profiles.plan_type in sync with user_usage.plan_type."""
+    valid_plans = {"guest", "trial", "monthly", "yearly"}
+    plan_type = (plan_type or "trial").strip().lower()
+    if plan_type not in valid_plans:
+        logger.warning("update_profile_plan: invalid plan_type %s", plan_type)
+        return
+    client = _get_client()
+    if not client:
+        return
+    try:
+        from datetime import datetime, timezone
+        now_iso = datetime.now(timezone.utc).isoformat()
+        client.table("profiles").upsert(
+            {"user_id": user_id.strip(), "plan_type": plan_type, "updated_at": now_iso},
+            on_conflict="user_id",
+        ).execute()
+    except Exception as e:
+        logger.warning("update_profile_plan failed: %s", type(e).__name__)
 
 
 def ensure_user_usage_row(
@@ -306,6 +332,107 @@ def insert_reflection(
     except Exception as e:
         logger.exception("Supabase insert_reflection failed: %s", e)
     return None
+
+
+def count_guest_reflections_by_guest_id(guest_id: str) -> int:
+    """Count reflections with this guest_id and user_id IS NULL. Max 2 per guest."""
+    if not guest_id or not str(guest_id).strip():
+        return 0
+    client = _get_client()
+    if not client:
+        return 0
+    try:
+        response = (
+            client.table("reflections")
+            .select("id")
+            .eq("guest_id", guest_id.strip())
+            .is_("user_id", "null")
+            .limit(2)
+            .execute()
+        )
+        return len(response.data or [])
+    except Exception as e:
+        logger.warning("Supabase count_guest_reflections_by_guest_id failed: %s", e)
+    return 0
+
+
+def insert_guest_reflection(
+    guest_id: str,
+    thought: str,
+    sections: list[dict],
+    personalized_mirror: str = "",
+    closing_text: str | None = None,
+) -> str | None:
+    """Insert a guest reflection (user_id NULL, guest_id set). Returns new row id or None."""
+    if not guest_id or not str(guest_id).strip():
+        return None
+    client = _get_client()
+    if not client:
+        return None
+    try:
+        row = {
+            "user_id": None,
+            "guest_id": guest_id.strip(),
+            "thought": (thought or "")[:5000],
+            "sections": sections or [],
+            "personalized_mirror": (personalized_mirror or "")[:3000],
+            "closing_text": (closing_text or "").strip() or None,
+        }
+        response = client.table("reflections").insert(row).execute()
+        if response.data and len(response.data) > 0:
+            return response.data[0].get("id")
+    except Exception as e:
+        logger.exception("Supabase insert_guest_reflection failed: %s", e)
+    return None
+
+
+def migrate_guest_reflections_to_user(guest_id: str, user_id: str) -> int:
+    """Reassign guest reflections (guest_id=X, user_id NULL) to user_id and clear guest_id. Returns count updated."""
+    if not guest_id or not user_id or not str(guest_id).strip() or not str(user_id).strip():
+        return 0
+    client = _get_client()
+    if not client:
+        return 0
+    try:
+        response = (
+            client.table("reflections")
+            .select("id")
+            .eq("guest_id", guest_id.strip())
+            .is_("user_id", "null")
+            .limit(2)
+            .execute()
+        )
+        rows = response.data or []
+        for r in rows:
+            rid = r.get("id")
+            if rid:
+                client.table("reflections").update({"user_id": user_id.strip(), "guest_id": None}).eq("id", rid).is_("user_id", "null").execute()
+        return len(rows)
+    except Exception as e:
+        logger.warning("Supabase migrate_guest_reflections_to_user failed: %s", e)
+    return 0
+
+
+def delete_orphaned_guest_reflections_older_than(days: int = 7) -> int:
+    """Delete guest reflections (user_id NULL, guest_id NOT NULL) older than given days. Returns count deleted."""
+    client = _get_client()
+    if not client:
+        return 0
+    try:
+        from datetime import datetime, timezone, timedelta
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+        response = (
+            client.table("reflections")
+            .delete()
+            .is_("user_id", "null")
+            .not_.is_("guest_id", "null")
+            .lt("created_at", cutoff)
+            .execute()
+        )
+        return len(response.data or [])
+    except Exception as e:
+        logger.warning("Supabase delete_orphaned_guest_reflections_older_than failed: %s", e)
+    return 0
 
 
 def insert_revisit_reminder(

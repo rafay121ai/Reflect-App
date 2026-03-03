@@ -1,3 +1,4 @@
+const GUEST_ID_KEY = "reflect_guest_id";
 const GUEST_REFLECTIONS_KEY = "reflect_guest_reflections";
 const GUEST_COUNT_KEY = "reflect_guest_count";
 
@@ -7,6 +8,29 @@ function safeParse(json, fallback) {
     return Array.isArray(value) ? value : fallback;
   } catch {
     return fallback;
+  }
+}
+
+export function getOrCreateGuestId() {
+  if (typeof window === "undefined") return null;
+  try {
+    let id = window.localStorage.getItem(GUEST_ID_KEY);
+    if (!id) {
+      id = "guest_" + (typeof crypto !== "undefined" && crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(16).slice(2)}`);
+      window.localStorage.setItem(GUEST_ID_KEY, id);
+    }
+    return id;
+  } catch {
+    return null;
+  }
+}
+
+export function getGuestId() {
+  if (typeof window === "undefined") return null;
+  try {
+    return window.localStorage.getItem(GUEST_ID_KEY);
+  } catch {
+    return null;
   }
 }
 
@@ -67,6 +91,7 @@ export function saveGuestReflection(reflection) {
 export function clearGuestSession() {
   if (typeof window === "undefined") return;
   try {
+    window.localStorage.removeItem(GUEST_ID_KEY);
     window.localStorage.removeItem(GUEST_REFLECTIONS_KEY);
     window.localStorage.removeItem(GUEST_COUNT_KEY);
   } catch {
@@ -75,4 +100,35 @@ export function clearGuestSession() {
 }
 
 export const GUEST_MAX_REFLECTIONS = 2;
+
+/**
+ * Save a completed guest reflection to the backend (in addition to localStorage).
+ * Non-fatal on failure — localStorage remains the source of truth until migration.
+ * @param {string} apiBaseUrl - e.g. getBackendUrl() + "/api"
+ * @param {{ thought: string, sections: Array, mirror: string, mood?: string, closing?: string }} reflectionData
+ */
+export async function saveGuestReflectionToDb(apiBaseUrl, reflectionData) {
+  if (!apiBaseUrl || !reflectionData) return;
+  const guestId = getOrCreateGuestId();
+  if (!guestId) return;
+  try {
+    const res = await fetch(`${apiBaseUrl.replace(/\/$/, "")}/reflect/guest-save`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        guest_id: guestId,
+        thought: reflectionData.thought || "",
+        sections: Array.isArray(reflectionData.sections) ? reflectionData.sections : [],
+        mirror: reflectionData.mirror || "",
+        mood_word: reflectionData.mood || "",
+        closing: reflectionData.closing || "",
+      }),
+    });
+    if (!res.ok) {
+      console.warn("Guest DB save failed:", res.status);
+    }
+  } catch (e) {
+    console.warn("Guest DB save failed, using localStorage only", e);
+  }
+}
 
