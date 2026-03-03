@@ -824,6 +824,53 @@ def delete_weekly_insight(user_id: str, week_start: str) -> bool:
         return False
 
 
+# ----- Beta feedback (notepad-style per user) -----
+
+def insert_beta_feedback(user_id: str, content: str) -> str | None:
+    """Insert a beta feedback entry. Returns new row id or None."""
+    if not user_id or not str(user_id).strip():
+        return None
+    content = (content or "").strip()
+    if not content:
+        return None
+    client = _get_client()
+    if not client:
+        return None
+    try:
+        row = {
+            "user_id": user_id.strip()[:256],
+            "content": content[:10000],
+        }
+        response = client.table("beta_feedback").insert(row).execute()
+        if response.data and len(response.data) > 0:
+            return response.data[0].get("id")
+    except Exception as e:
+        logger.exception("Supabase insert_beta_feedback failed: %s", e)
+    return None
+
+
+def list_beta_feedback_for_user(user_id: str, limit: int = 50) -> list[dict]:
+    """List beta feedback entries for this user, newest first."""
+    if not user_id or not str(user_id).strip():
+        return []
+    client = _get_client()
+    if not client:
+        return []
+    try:
+        response = (
+            client.table("beta_feedback")
+            .select("id, content, created_at")
+            .eq("user_id", user_id.strip())
+            .order("created_at", desc=True)
+            .limit(max(1, min(limit, 100)))
+            .execute()
+        )
+        return response.data or []
+    except Exception as e:
+        logger.exception("Supabase list_beta_feedback_for_user failed: %s", e)
+    return []
+
+
 # ----- Profiles (name, email, preferences for personalization) -----
 
 def get_profile(user_id: str) -> dict | None:
@@ -957,7 +1004,7 @@ def delete_user_data(user_id: str, delete_auth_user: bool = True) -> bool:
     Delete all data for this user (GDPR-style account deletion).
     Removes: mood_checkins (via reflections), revisit_reminders, reflections,
     reflection_patterns (for those reflections), saved_reflections, weekly_insights,
-    user_personalization_context, profiles. Optionally deletes the auth user so they cannot log in again.
+    user_personalization_context, profiles, beta_feedback, user_usage. Optionally deletes the auth user so they cannot log in again.
     Returns True if all steps completed without critical failure.
     """
     if not user_id or not str(user_id).strip():
@@ -1007,6 +1054,7 @@ def delete_user_data(user_id: str, delete_auth_user: bool = True) -> bool:
             ("weekly_insights", "user_id"),
             ("user_personalization_context", "user_id"),
             ("profiles", "user_id"),
+            ("beta_feedback", "user_id"),
         ]:
             try:
                 client.table(table).delete().eq(col, uid).execute()

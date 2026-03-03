@@ -10,6 +10,7 @@ import ViewReflection from "./components/reflection/ViewReflection";
 import ViewSavedReflection from "./components/reflection/ViewSavedReflection";
 import InsightsPanel from "./components/InsightsPanel";
 import SettingsPanel from "./components/SettingsPanel";
+import BetaFeedbackPanel from "./components/BetaFeedbackPanel";
 import { Toaster, toast } from "sonner";
 import { requestNotificationPermission, scheduleRevisitNotification, setOpenReflectionHandler } from "./lib/notifications";
 import { useAuth } from "./contexts/AuthContext";
@@ -58,6 +59,7 @@ function App() {
   const [historyDropdownOpen, setHistoryDropdownOpen] = useState(false);
   const [insightsPanelOpen, setInsightsPanelOpen] = useState(false);
   const [settingsPanelOpen, setSettingsPanelOpen] = useState(false);
+  const [betaFeedbackPanelOpen, setBetaFeedbackPanelOpen] = useState(false);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [historyAll, setHistoryAll] = useState([]);
   const [revisitBannerHidden, setRevisitBannerHidden] = useState(false);
@@ -102,6 +104,7 @@ function App() {
     setHistoryDropdownOpen(false);
     setInsightsPanelOpen(false);
     setSettingsPanelOpen(false);
+    setBetaFeedbackPanelOpen(false);
     setShowSignInModal(false);
     try {
       localStorage.removeItem(REVISIT_LATER_KEY);
@@ -826,6 +829,15 @@ function App() {
               >
                 Settings
               </button>
+              {user && (
+                <button
+                  type="button"
+                  onClick={() => { setBetaFeedbackPanelOpen(true); setHistoryDropdownOpen(false); }}
+                  className="w-full text-left text-sm text-[#4A5568] hover:bg-[#FFB4A9]/10 rounded-lg px-3 py-2 transition-colors"
+                >
+                  Beta Feedback
+                </button>
+              )}
             </div>
           </div>
         )}
@@ -846,6 +858,13 @@ function App() {
               onClose={() => setSettingsPanelOpen(false)}
               onOpenSignIn={() => { setSettingsPanelOpen(false); setShowSignInModal(true); }}
             />
+        )}
+      </AnimatePresence>
+
+      {/* Beta Feedback panel */}
+      <AnimatePresence>
+        {betaFeedbackPanelOpen && (
+          <BetaFeedbackPanel apiBase={API} onClose={() => setBetaFeedbackPanelOpen(false)} />
         )}
       </AnimatePresence>
 

@@ -84,6 +84,8 @@ from supabase_client import (
     insert_guest_reflection,
     migrate_guest_reflections_to_user,
     delete_orphaned_guest_reflections_older_than,
+    insert_beta_feedback,
+    list_beta_feedback_for_user,
 )
 
 # So Supabase and Ollama client warnings/errors show in the uvicorn terminal
@@ -315,6 +317,10 @@ class GuestSaveRequest(BaseModel):
     mirror: str = Field("", max_length=3000)
     mood_word: str = Field("", max_length=100)
     closing: str = Field("", max_length=2000)
+
+
+class BetaFeedbackRequest(BaseModel):
+    content: str = Field(..., max_length=10000)
 
 
 @app.get("/")
@@ -1071,6 +1077,36 @@ def cleanup_guest_reflections(
         return {"deleted": deleted}
     except Exception as e:
         raise _server_error(e, "cleanup-guest-reflections")
+
+
+# ----- Beta feedback -----
+
+@app.post("/api/beta-feedback")
+@limiter.limit("10/minute")
+def beta_feedback_submit(request: Request, body: BetaFeedbackRequest, user_id: str = Depends(require_user_id)):
+    """Submit beta feedback (notepad-style). Saved per user."""
+    content = (body.content or "").strip()
+    if not content:
+        raise HTTPException(status_code=400, detail="content is required")
+    try:
+        fid = insert_beta_feedback(user_id, content)
+        if not fid:
+            raise _server_error(Exception("Insert returned None"), "beta-feedback")
+        return {"id": fid}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise _server_error(e, "beta-feedback")
+
+
+@app.get("/api/beta-feedback")
+def beta_feedback_list(user_id: str = Depends(require_user_id)):
+    """List current user's beta feedback entries, newest first."""
+    try:
+        items = list_beta_feedback_for_user(user_id, limit=50)
+        return {"items": items}
+    except Exception as e:
+        raise _server_error(e, "beta-feedback-list")
 
 
 # ----- Insights (optional, user-initiated) -----
