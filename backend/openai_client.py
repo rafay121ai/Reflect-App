@@ -646,30 +646,47 @@ def get_closing(thought: str, answers: list | dict, mirror: str, mood_word: str 
     
     system = """You write the closing moment of a private reflection experience.
 
-Two movements. No labels. No headers. Flows as one piece.
+Two movements. No labels. No headers. Each stands alone.
 
-MOVEMENT 1 — one sentence:
-Say the thing about this person that they didn't say but that's clearly true.
-Make it slightly uncomfortable. Make it about WHO THEY ARE, not what they felt.
-The mirror covered feelings. You go somewhere the mirror didn't.
-This is the sentence they'll think about later.
+MOVEMENT 1 — THE UNCOMFORTABLE TRUTH:
+One sentence. About who they are as a person.
+Not what they felt. Not what happened. WHO THEY ARE.
+It should land like someone finally said the thing out loud.
+Slightly uncomfortable. Specific enough that no one else could receive it.
+The kind of sentence that makes someone go quiet.
+This is completely separate from anything the mirror said.
+The mirror covered feelings. You name the person.
 
-MOVEMENT 2 — one to two sentences:
-A personal insight drawn from everything in this conversation.
-What does this reveal about them as a person — a pattern, a value,
-a contradiction, something they consistently carry or need?
-Make it feel like someone has been paying very close attention.
-End open. Not resolved. Not advised.
+MOVEMENT 2 — THE TAKEAWAY:
+One or two sentences. A personal insight about their thinking,
+their patterns, or their psychology.
+The kind of thing they'll turn over in their mind all night.
+Not a conclusion. A question disguised as an observation.
+Something that makes them look at themselves differently.
+Should feel like a small truth they've been avoiding.
 
-Rules:
-- Never repeat anything from the mirror response. Not the theme.
-  Not the image. Not the emotion. Completely different territory.
-- No advice. No fixing. No reassurance.
-- No "Between now and next time" — cut this entirely.
-- No poetic filler. Every word does work.
+Rules that never break:
+- Never repeat anything from the mirror. Not the theme, not the image,
+  not the emotion. Completely different territory.
+- No advice. No fixing. No reassurance. No "Between now and next time."
 - Speak TO them. Always "you."
-- Simple language. Under 60 words total.
-- The whole thing should feel like: "How did it know that."
+- Simple language only. Every word does work.
+- Movement 1: under 20 words. One sentence maximum.
+- Movement 2: under 40 words. One or two sentences maximum.
+- Total: under 60 words.
+- The whole closing should feel like: "How did it know that about me."
+
+The test for Movement 1:
+- Is it about who they ARE, not what they felt?
+- Is it completely different from the mirror?
+- Would it make them pause mid-scroll?
+If any answer is no — rewrite it.
+
+The test for Movement 2:
+- Will they think about this tonight?
+- Does it reveal something about their psychology or thinking patterns?
+- Does it end open — not resolved, not advised?
+If any answer is no — rewrite it.
 """
 
     prompt = f"""The person wrote this thought:
@@ -678,34 +695,50 @@ Rules:
 Their answers through the reflection:
 {answers_text}
 
-The mirror they already received:
+The mirror they already received (DO NOT REPEAT ANYTHING FROM THIS):
 "{mirror}"
 
 Their mood: {mood_text}
 
 {personalization_block if personalization_block else ""}
 
-CRITICAL: The mirror above already covered their feelings and the
-tension underneath. Do NOT go back there.
-You are going somewhere the mirror didn't.
+Write the closing. Two movements. Separated by a blank line. No labels.
 
-Write the closing. Two movements. No labels. Under 60 words.
+MOVEMENT 1 — one sentence, under 20 words:
+What does everything they wrote reveal about WHO THIS PERSON IS?
+Not their feelings — their character, their patterns, their psychology.
+The thing that's true about them that they haven't named.
+Make it land like recognition. Make it slightly uncomfortable.
 
-Movement 1: One sentence. Something true about who they are
-as a person — slightly uncomfortable, specific, nothing like the mirror.
-Ask yourself: what does everything they wrote reveal about
-the KIND OF PERSON they are, not how they feel right now?
+Examples of the quality and specificity you're going for:
+- "You're the one keeping score of who's taking this seriously —
+   including yourself."
+- "You already know the answer — you just want permission not to choose it."
+- "The joking isn't distance. It's how you buy yourself time to feel it
+   properly."
 
-Movement 2: One to two sentences. A personal insight —
-a pattern, contradiction, or value that showed up in this conversation.
-What does this reveal about them that they probably haven't named?
-End open. Not resolved.
+MOVEMENT 2 — one to two sentences, under 40 words:
+What insight about their thinking or psychology emerges from this
+entire conversation?
+The kind of thing they'll turn over in their mind all night.
+A small truth about how they think, what they protect, or what
+they keep returning to — that they probably haven't said out loud.
 
-Test before you output:
-- Is Movement 1 completely different from the mirror? If no, rewrite.
-- Does Movement 2 say something about who they are, not just what happened?
-  If no, rewrite.
-- Could this closing have been written for anyone else? If yes, rewrite."""
+Examples of the quality and specificity you're going for:
+- "What if the doubt you judge in them lives equally in you?"
+- "You process danger by naming it. The joke is the naming."
+- "You hold space for other people's fear better than your own."
+
+CRITICAL CHECKS before outputting:
+1. Is Movement 1 completely different from the mirror above?
+   If it touches the same theme or emotion — rewrite it.
+2. Does Movement 1 name who they ARE, not how they feel?
+   If not — rewrite it.
+3. Will Movement 2 stay with them tonight?
+   If it feels like a summary or advice — rewrite it.
+4. Is the total under 60 words? If not — cut ruthlessly.
+
+Output two movements separated by a blank line. Nothing else."""
 
     try:
         result = _chat(prompt, system=system).strip()

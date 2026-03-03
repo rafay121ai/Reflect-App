@@ -6,14 +6,13 @@ const ClosingScreen = ({
   onDone,
 }) => {
   // Fallback text if API fails
-  const displayText = closingText || "You showed up today. That matters. Between now and next time — notice what you're already carrying. It's worth your attention.";
+  const fallbackText = "You showed up today. That matters. What you're already carrying is worth your attention.";
+  const displayText = closingText || fallbackText;
 
-  // Split text to highlight "Between now and next time —" part
-  const openThreadMarker = "Between now and next time —";
-  const openThreadIndex = displayText.indexOf(openThreadMarker);
-  const hasOpenThread = openThreadIndex >= 0;
-  const beforeOpenThread = hasOpenThread ? displayText.substring(0, openThreadIndex).trim() : null;
-  const openThreadPart = hasOpenThread ? displayText.substring(openThreadIndex).trim() : displayText;
+  // Parse the two movements from the closing string (backend returns them separated by blank line)
+  const movements = displayText.split(/\n\n+/).map((s) => s.trim()).filter(Boolean);
+  const uncomfortableTruth = movements[0] || displayText;
+  const takeaway = movements[1] || null;
 
   return (
     <motion.div
@@ -24,7 +23,7 @@ const ClosingScreen = ({
       className="w-full max-w-xl flex flex-col items-center text-center py-12 px-8 relative"
       data-testid="closing-screen"
     >
-      {/* Calm, static “ending” background — warm fade, no motion */}
+      {/* Calm, static "ending" background — warm fade, no motion */}
       <div
         className="absolute inset-0 -z-10"
         style={{
@@ -51,77 +50,66 @@ const ClosingScreen = ({
           </motion.div>
         ) : (
           <div
-            className="relative z-10 text-center max-w-lg mx-auto"
+            className="closing-container relative z-10 text-center max-w-lg mx-auto"
             style={{ fontFamily: "'Fraunces', serif", fontWeight: 300 }}
             data-testid="closing-content"
           >
-            {/* Named Truth — appears first */}
-            {beforeOpenThread && (
-              <motion.p
-                initial={{ opacity: 0, y: 8 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ duration: 0.6, ease: "easeOut" }}
+            {/* Movement 1 — The Uncomfortable Truth */}
+            <motion.div
+              className="closing-truth"
+              initial={{ opacity: 0, y: 8 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.5 }}
+            >
+              <p
                 className="text-[#4A5568] leading-relaxed"
                 style={{ fontSize: "1.5rem", lineHeight: 1.6 }}
               >
-                {beforeOpenThread}
-              </motion.p>
-            )}
-            {/* Divider between Named Truth and Open Thread */}
-            {hasOpenThread && beforeOpenThread && (
-              <motion.div
-                initial={{ opacity: 0, scaleX: 0.5 }}
-                animate={{ opacity: 1, scaleX: 1 }}
-                transition={{ delay: 0.35, duration: 0.5, ease: "easeOut" }}
-                className="w-12 h-px bg-current mx-auto my-8 origin-center"
-                style={{ color: "#4A5568", opacity: 0.25 }}
+                {uncomfortableTruth}
+              </p>
+            </motion.div>
+
+            {/* Divider */}
+            {takeaway && (
+              <div
+                className="closing-divider h-px w-12 mx-auto my-10 origin-center"
+                style={{ backgroundColor: "rgba(74, 85, 104, 0.2)" }}
                 aria-hidden
               />
             )}
-            {/* Open Thread — second movement, like “and finally…” */}
-            {hasOpenThread ? (
-              <>
-                <motion.p
-                  initial={{ opacity: 0, y: 6 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={{ delay: 0.5, duration: 0.5, ease: "easeOut" }}
-                  className="text-[#A0AEC0] text-sm italic mb-2 tracking-wide"
-                  style={{ fontFamily: "'Fraunces', serif", opacity: 0.6 }}
+
+            {/* Movement 2 — The Takeaway */}
+            {takeaway && (
+              <motion.div
+                className="closing-takeaway"
+                initial={{ opacity: 0, y: 8 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.5, delay: 0.4 }}
+              >
+                <span
+                  className="closing-takeaway-label block text-xs uppercase tracking-[0.35em] text-[#A0AEC0] mb-3"
+                  style={{ fontFamily: "'Fraunces', serif" }}
                 >
-                  {openThreadMarker}
-                </motion.p>
-                <motion.p
-                  initial={{ opacity: 0, y: 6 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={{ delay: 0.65, duration: 0.65, ease: "easeOut" }}
+                  something to sit with
+                </span>
+                <p
                   className="text-[#718096] leading-relaxed"
                   style={{
                     fontFamily: "'Fraunces', serif",
                     fontWeight: 300,
-                    fontSize: "1.1rem",
+                    fontSize: "1.125rem",
                     lineHeight: 1.7,
-                    opacity: 0.75,
                   }}
                 >
-                  {openThreadPart.replace(openThreadMarker, "").trim()}
-                </motion.p>
-              </>
-            ) : (
-              <motion.p
-                initial={{ opacity: 0, y: 8 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ duration: 0.6, ease: "easeOut" }}
-                className="text-[#4A5568] leading-relaxed"
-                style={{ fontSize: "1.5rem", lineHeight: 1.6 }}
-              >
-                {openThreadPart}
-              </motion.p>
+                  {takeaway}
+                </p>
+              </motion.div>
             )}
           </div>
         )}
       </div>
 
-      {/* Ending flourish + close — feels like “the end” */}
+      {/* Ending flourish + close — feels like "the end" */}
       {!isLoading && (
         <motion.div
           initial={{ opacity: 0 }}
