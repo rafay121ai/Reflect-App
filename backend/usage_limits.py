@@ -16,8 +16,8 @@ from supabase_client import (
 logger = logging.getLogger(__name__)
 
 # Limits per plan (server-side constants only)
-TRIAL_PER_DAY = 2
-TRIAL_TOTAL = 14
+TRIAL_PER_DAY = 4
+TRIAL_TOTAL = 28
 TRIAL_DAYS = 7
 MONTHLY_LIMIT = 50
 YEARLY_LIMIT = 75

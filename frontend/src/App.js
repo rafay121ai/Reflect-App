@@ -973,11 +973,6 @@ function App() {
         <p className="text-xs text-[#A0AEC0] tracking-wide" data-testid="footer-disclaimer">
           This is a reflection space, not therapy. If you're in crisis, please reach out to a mental health professional.
         </p>
-        <p className="text-xs text-[#A0AEC0] mt-2">
-          <a href="/privacy.html" target="_blank" rel="noopener noreferrer" className="hover:text-[#FFB4A9] transition-colors">Privacy Policy</a>
-          <span className="mx-2">·</span>
-          <a href="/terms.html" target="_blank" rel="noopener noreferrer" className="hover:text-[#FFB4A9] transition-colors">Terms of Service</a>
-        </p>
       </footer>
     </div>
   );
