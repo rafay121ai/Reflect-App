@@ -26,6 +26,7 @@ import { BookOpen, Settings } from "lucide-react";
 import { supabase } from "./lib/supabase";
 import { getBackendUrl } from "./lib/config";
 import { getGuestCount, saveGuestReflection, GUEST_MAX_REFLECTIONS } from "./lib/guestSession";
+import { Analytics } from "@vercel/analytics/react";
 
 const BACKEND_URL = getBackendUrl();
 const API = `${BACKEND_URL}/api`;
@@ -639,6 +640,7 @@ function App() {
 
   return (
     <div className="min-h-screen bg-[#FFFDF7]" data-testid="app-container">
+      <Analytics />
       <Toaster position="top-center" richColors />
 
       {/* Paywall limit modal: when user hits 429 (reflection limit) — native paywall or this fallback */}
