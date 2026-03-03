@@ -139,6 +139,9 @@ def startup():
     logging.info("LLM provider: %s", LLM_PROVIDER)
     # CORS: log allowed origins so production deployers can verify
     logging.info("CORS allowed_origins: %s", ALLOWED_ORIGINS)
+    if CORS_ORIGIN_REGEX:
+        logging.info("CORS allow_origin_regex: %s", CORS_ORIGIN_REGEX)
+    logging.info("ALLOWED_HOSTS: %s", ALLOWED_HOSTS)
     if not os.getenv("ALLOWED_ORIGINS", "").strip():
         logging.warning("ALLOWED_ORIGINS not set; using default http://localhost:3000 — set ALLOWED_ORIGINS in production")
     status = get_supabase_status()
@@ -154,7 +157,12 @@ def startup():
         logging.info("Personalization auto-refresh: every %.1f hours", PERSONALIZATION_REFRESH_INTERVAL_HOURS)
 
 # CORS: get allowed origins from environment (set ALLOWED_ORIGINS in production)
-ALLOWED_ORIGINS = [o.strip() for o in os.getenv("ALLOWED_ORIGINS", "http://localhost:3000").split(",") if o.strip()]
+_origins_raw = [o.strip() for o in os.getenv("ALLOWED_ORIGINS", "http://localhost:3000").split(",") if o.strip()]
+# Split into exact origins vs wildcard patterns (e.g. https://*.vercel.app)
+ALLOWED_ORIGINS = [o for o in _origins_raw if "*" not in o]
+# Allow Vercel preview/production: any origin matching https://<anything>.vercel.app
+_vercel_pattern = next((o for o in _origins_raw if "*" in o and "vercel.app" in o), None)
+CORS_ORIGIN_REGEX = r"https://[a-zA-Z0-9][a-zA-Z0-9-]*\.vercel\.app" if _vercel_pattern else None
 
 # Safety check — never allow wildcard CORS with credentials in production
 _env = os.getenv("ENV", "development")
@@ -168,15 +176,19 @@ if "*" in ALLOWED_ORIGINS and len(ALLOWED_ORIGINS) > 1:
         "Do not mix '*' with specific origins in ALLOWED_ORIGINS."
     )
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=ALLOWED_ORIGINS,
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+_cors_kw: dict = {
+    "allow_origins": ALLOWED_ORIGINS,
+    "allow_credentials": True,
+    "allow_methods": ["*"],
+    "allow_headers": ["*"],
+}
+if CORS_ORIGIN_REGEX:
+    _cors_kw["allow_origin_regex"] = CORS_ORIGIN_REGEX
 
-# Trusted hosts — configure via ALLOWED_HOSTS env
+app.add_middleware(CORSMiddleware, **_cors_kw)
+
+# Trusted hosts — configure via ALLOWED_HOSTS env (required in production: add your backend host, e.g. Railway)
+# If the request Host header is not in this list, TrustedHostMiddleware returns 400 (causing OPTIONS to fail).
 ALLOWED_HOSTS = [o.strip() for o in os.getenv("ALLOWED_HOSTS", "localhost,127.0.0.1").split(",") if o.strip()]
 app.add_middleware(TrustedHostMiddleware, allowed_hosts=ALLOWED_HOSTS)
 
