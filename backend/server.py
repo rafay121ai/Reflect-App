@@ -12,6 +12,7 @@ REFLECT backend – FastAPI server that uses local Ollama (e.g. Qwen) for reflec
 # ALLOWED_ORIGINS=https://your-app.vercel.app
 # ============================================================
 """
+import json
 import logging
 import os
 import threading
@@ -35,6 +36,7 @@ from auth import require_user_id
 from security import sanitize_for_llm
 
 from llm_provider import get_reflection, get_personalized_mirror, extract_pattern, get_mood_suggestions, get_reminder_message, get_insight_letter, get_closing, convert_moods_to_feelings, llm_chat
+from openai_client import get_mirror_report
 from pattern_analyzer import analyze_patterns_deep_sync
 from revenuecat_client import get_subscription_status as get_rc_subscription_status
 from usage_limits import enforce_reflection_limit, rollback_reflection_usage
@@ -86,6 +88,7 @@ from supabase_client import (
     delete_orphaned_guest_reflections_older_than,
     insert_beta_feedback,
     list_beta_feedback_for_user,
+    save_mirror_report,
 )
 
 # So Supabase and Ollama client warnings/errors show in the uvicorn terminal
@@ -252,6 +255,14 @@ class MirrorRequest(BaseModel):
     questions: list[str] = Field(..., max_length=20)
     answers: dict | list
     reflection_id: str | None = Field(default=None, max_length=100)
+
+
+class MirrorReportRequest(BaseModel):
+    thought: str = Field(..., max_length=5000)
+    questions: list[str] = Field(..., max_items=20)
+    answers: list[str] = Field(..., max_items=20)
+    reflection_id: str = Field("", max_length=100)
+    reflection_mode: str = Field("gentle", max_length=20)
 
 
 class MoodRequest(BaseModel):
@@ -487,7 +498,7 @@ def reflect_get():
 
 @app.post("/api/reflect")
 @app.post("/api/reflect/")
-@limiter.limit("10/minute")
+@limiter.limit("20/hour")
 def reflect(request: Request, body: ReflectRequest, background_tasks: BackgroundTasks, user_id: str = Depends(require_user_id)):
     return _do_reflect(body, user_id=user_id, background_tasks=background_tasks)
 
@@ -619,7 +630,7 @@ def migrate_guest_reflections(request: Request, body: MigrateGuestRequest, user_
 
 
 @app.post("/api/mirror/personalized")
-@limiter.limit("10/minute")
+@limiter.limit("20/hour")
 def mirror_personalized(request: Request, body: MirrorRequest, user_id: str = Depends(require_user_id)):
     if not (body.thought or "").strip():
         raise HTTPException(status_code=400, detail="thought is required")
@@ -642,6 +653,91 @@ def mirror_personalized(request: Request, body: MirrorRequest, user_id: str = De
         raise HTTPException(status_code=502, detail=f"Ollama error: {e}")
 
 
+@app.post("/api/mirror/report")
+@limiter.limit("20/hour")
+def mirror_report(
+    body: MirrorReportRequest,
+    request: Request,
+    user_id: str = Depends(require_user_id),
+):
+    """
+    Generate the 4-slide mirror report.
+    Called after user answers questions.
+    Replaces the old personalized mirror statement entirely.
+    """
+    thought = (body.thought or "").strip()
+    if not thought:
+        raise HTTPException(status_code=400, detail="Thought is required")
+
+    safe_thought = sanitize_for_llm(thought)
+
+    try:
+        user_context = get_personalization_context(user_id) or {}
+    except Exception:
+        user_context = {}
+
+    try:
+        pattern_history = get_pattern_history_for_user(user_id, limit=5)
+    except Exception:
+        pattern_history = []
+
+    # Ownership check if reflection_id provided
+    if body.reflection_id:
+        ref_row = get_reflection_by_id(body.reflection_id.strip())
+        if not ref_row or (ref_row.get("user_id") or "").strip() != user_id:
+            raise HTTPException(status_code=404, detail="Reflection not found")
+
+    try:
+        report = get_mirror_report(
+            thought=safe_thought,
+            questions=body.questions,
+            answers=body.answers,
+            user_context=user_context,
+            pattern_history=pattern_history,
+        )
+
+        # Save report to reflection if reflection_id provided
+        if body.reflection_id and report:
+            try:
+                save_mirror_report(body.reflection_id, report)
+            except Exception as e:
+                logger.warning("Failed to save mirror report: %s", type(e).__name__)
+
+        return report
+    except Exception as e:
+        raise _server_error(e, "mirror-report")
+
+
+@app.post("/api/mirror/report/guest")
+@limiter.limit("5/minute")
+def mirror_report_guest(
+    body: MirrorReportRequest,
+    request: Request,
+):
+    """
+    Generate the 4-slide mirror report for guest users.
+    No auth required. No personalization history.
+    Same response shape as /api/mirror/report.
+    """
+    thought = (body.thought or "").strip()
+    if not thought:
+        raise HTTPException(status_code=400, detail="Thought is required")
+
+    safe_thought = sanitize_for_llm(thought)
+
+    try:
+        report = get_mirror_report(
+            thought=safe_thought,
+            questions=body.questions,
+            answers=body.answers,
+            user_context=None,
+            pattern_history=None,
+        )
+        return report
+    except Exception as e:
+        raise _server_error(e, "mirror-report-guest")
+
+
 @app.post("/api/mirror/personalized/guest")
 @limiter.limit("10/minute")
 def mirror_personalized_guest(request: Request, body: MirrorRequest):
@@ -659,7 +755,7 @@ def mirror_personalized_guest(request: Request, body: MirrorRequest):
 
 
 @app.post("/api/closing")
-@limiter.limit("10/minute")
+@limiter.limit("20/hour")
 def closing(request: Request, body: ClosingRequest, user_id: str = Depends(require_user_id)):
     """Generate closing moment with named truth + open thread. Updates reflection with closing_text if reflection_id provided."""
     if not (body.thought or "").strip():
@@ -668,10 +764,17 @@ def closing(request: Request, body: ClosingRequest, user_id: str = Depends(requi
         raise HTTPException(status_code=400, detail="mirror_response is required")
     user_context = get_personalization_context(user_id) or {}
     pattern_history_data = get_pattern_history_for_user(user_id, 5) or []
+    mirror_report_context: str | None = None
     if body.reflection_id:
         ref_row = get_reflection_by_id(body.reflection_id.strip())
         if not ref_row or (ref_row.get("user_id") or "").strip() != user_id:
             raise HTTPException(status_code=404, detail="Reflection not found")
+        mirror_report = ref_row.get("mirror_report")
+        if mirror_report:
+            try:
+                mirror_report_context = json.dumps(mirror_report)
+            except TypeError:
+                mirror_report_context = str(mirror_report)
     try:
         thought = body.thought.strip()
         safe_thought = sanitize_for_llm(thought)
@@ -679,7 +782,16 @@ def closing(request: Request, body: ClosingRequest, user_id: str = Depends(requi
         mood_word = (body.mood_word or "").strip() or None
         mode = body.reflection_mode or "gentle"
 
-        closing_text = get_closing(safe_thought, body.answers, mirror, mood_word, mode, user_context=user_context, pattern_history=pattern_history_data)
+        closing_text = get_closing(
+            safe_thought,
+            body.answers,
+            mirror,
+            mood_word,
+            mode,
+            user_context=user_context,
+            pattern_history=pattern_history_data,
+            mirror_report_context=mirror_report_context,
+        )
         
         if body.reflection_id:
             update_reflection_closing(body.reflection_id, closing_text)
@@ -704,7 +816,16 @@ def closing_guest(request: Request, body: ClosingRequest):
         mirror = body.mirror_response.strip()
         mood_word = (body.mood_word or "").strip() or None
         mode = body.reflection_mode or "gentle"
-        closing_text = get_closing(safe_thought, body.answers, mirror, mood_word, mode, user_context={})
+        closing_text = get_closing(
+            safe_thought,
+            body.answers,
+            mirror,
+            mood_word,
+            mode,
+            user_context={},
+            pattern_history=None,
+            mirror_report_context=None,
+        )
         return {"closing_text": closing_text}
     except Exception as e:
         logging.exception("Closing generation failed: %s", type(e).__name__)
@@ -763,7 +884,7 @@ def reminder_delete(reminder_id: str, user_id: str = Depends(require_user_id)):
 
 
 @app.post("/api/mood/suggest")
-@limiter.limit("10/minute")
+@limiter.limit("20/hour")
 def mood_suggest(request: Request, body: MoodSuggestRequest, user_id: str = Depends(require_user_id)):
     """Suggest 4–5 metaphor phrases with descriptions from thought + mirror. Not judging—offering language they might borrow."""
     thought = (body.thought or "").strip()

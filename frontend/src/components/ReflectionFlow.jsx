@@ -3,7 +3,9 @@ import { motion, AnimatePresence } from "framer-motion";
 import JourneyCards from "./reflection/JourneyCards";
 import InteractiveQuestions from "./reflection/InteractiveQuestions";
 import RevisitChoiceScreen from "./reflection/RevisitChoiceScreen";
-import MirrorReflection from "./reflection/MirrorReflection";
+import MirrorEntry from "./mirror/MirrorEntry";
+import MirrorSlides from "./mirror/MirrorSlides";
+import { useMirrorReport } from "./mirror/useMirrorReport";
 import MoodCheckIn from "./reflection/MoodCheckIn";
 import ClosingScreen from "./reflection/ClosingScreen";
 
@@ -26,6 +28,8 @@ const STEP_SUBTEXT = [
 ];
 
 const ReflectionFlow = ({
+  apiBase,
+  accessToken,
   sections,
   originalThought,
   reflectionId,
@@ -43,7 +47,6 @@ const ReflectionFlow = ({
   const [currentStep, setCurrentStep] = useState(STEPS.JOURNEY);
   const [personalizedMirror, setPersonalizedMirror] = useState(null);
   const [questionResponses, setQuestionResponses] = useState([]);
-  const [isLoadingMirror, setIsLoadingMirror] = useState(false);
   const [userChoseReadNow, setUserChoseReadNow] = useState(false);
   const [closingText, setClosingText] = useState(null);
   const [isLoadingClosing, setIsLoadingClosing] = useState(false);
@@ -57,8 +60,6 @@ const ReflectionFlow = ({
   };
 
   const questionsSection = findSection("Notice") || findSection("Questions") || findSection("Some Things to Notice");
-  const mirrorSection = findSection("Mirror") || findSection("Here's What I'm Seeing") || findSection("A Mirror");
-
   // Parse questions
   const parseQuestions = (content) => {
     if (!content) return ["What do you notice right now?", "What feels most important?", "What do you need?"];
@@ -79,14 +80,7 @@ const ReflectionFlow = ({
   const handleQuestionsComplete = (responses) => {
     setQuestionResponses(responses || []);
     setCurrentStep(STEPS.MIRROR);
-    setIsLoadingMirror(true);
     setUserChoseReadNow(false);
-
-    // Load mirror in background; show options immediately
-    onGetPersonalizedMirror(responses).then((personalized) => {
-      if (personalized) setPersonalizedMirror(personalized);
-      setIsLoadingMirror(false);
-    });
   };
 
   const handleMoodDone = (moodWord) => {
@@ -122,6 +116,34 @@ const ReflectionFlow = ({
     } else {
       setIsLoadingClosing(false);
     }
+  };
+
+  const showMirrorReadNow = currentStep === STEPS.MIRROR && userChoseReadNow;
+  const { report: mirrorReport, isLoading: reportLoading } = useMirrorReport({
+    apiBase,
+    thought: originalThought,
+    questions,
+    answers: (questionResponses || []).map((r) => r?.response ?? ""),
+    reflectionId,
+    accessToken,
+    enabled: showMirrorReadNow,
+  });
+  const [mirrorOpened, setMirrorOpened] = useState(false);
+
+  const handleMirrorSlidesComplete = () => {
+    if (mirrorReport) {
+      const summary = [
+        mirrorReport.archetype?.name,
+        mirrorReport.shaped_by,
+        mirrorReport.costing_you,
+        mirrorReport.question,
+      ]
+        .filter(Boolean)
+        .join("\n\n");
+      setPersonalizedMirror(summary);
+    }
+    setMirrorOpened(false);
+    handleContinueToMood();
   };
 
   const handleBackToJourney = () => {
@@ -229,34 +251,54 @@ const ReflectionFlow = ({
             />
           )}
 
-          {currentStep === STEPS.MIRROR && userChoseReadNow && isLoadingMirror && (
-            <motion.div
-              key="mirror-loading"
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              className="w-full max-w-xl flex flex-col items-center justify-center py-16"
-              data-testid="mirror-loading"
+          {currentStep === STEPS.MIRROR && userChoseReadNow && (
+            <div
+              key="mirror-wrapped"
+              style={{
+                position: "fixed",
+                top: 0,
+                left: 0,
+                width: "100vw",
+                height: "100vh",
+                zIndex: 100,
+                background: "#0a0a12",
+              }}
             >
-              <motion.div
-                className="w-10 h-10 rounded-full border-2 border-[#FFB4A9]/50 border-t-[#FFB4A9]"
-                animate={{ rotate: 360 }}
-                transition={{ duration: 1, repeat: Infinity, ease: "linear" }}
-              />
-              <p className="text-[#718096] text-sm mt-4">Loading your mirror…</p>
-            </motion.div>
-          )}
-
-          {currentStep === STEPS.MIRROR && userChoseReadNow && !isLoadingMirror && (
-            <MirrorReflection
-              key="mirror"
-              content={mirrorSection.content}
-              personalizedContent={personalizedMirror}
-              isLoading={false}
-              reflectionId={reflectionId}
-              onContinue={handleContinueToMood}
-              onReflectAnother={onReflectAnother}
-              onStartFresh={onStartFresh}
-            />
+              <AnimatePresence mode="wait">
+                {!mirrorOpened ? (
+                  <motion.div
+                    key="entry"
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    exit={{ opacity: 0, scale: 1.05 }}
+                    transition={{ duration: 0.5 }}
+                    style={{ width: "100%", height: "100%" }}
+                  >
+                    <MirrorEntry
+                      archetypeName={mirrorReport?.archetype?.name}
+                      isLoading={reportLoading || !mirrorReport}
+                      onOpen={() => {
+                        console.log("[Mirror] onOpen called, transitioning to slides");
+                        if (mirrorReport) setMirrorOpened(true);
+                      }}
+                    />
+                  </motion.div>
+                ) : (
+                  <motion.div
+                    key="slides"
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    transition={{ duration: 0.4 }}
+                    style={{ width: "100%", height: "100%" }}
+                  >
+                    <MirrorSlides
+                      report={mirrorReport}
+                      onComplete={handleMirrorSlidesComplete}
+                    />
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </div>
           )}
 
           {currentStep === STEPS.MOOD && (
