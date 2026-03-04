@@ -68,7 +68,7 @@ export function useMirrorReport({
     return () => {
       cancelled = true;
     };
-  }, [enabled]);
+  }, [enabled, apiBase, thought, questions, answers, reflectionId, accessToken]);
 
   return { report, isLoading, error };
 }
