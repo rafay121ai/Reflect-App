@@ -1,38 +1,26 @@
 import { useState, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useSwipeable } from "react-swipeable";
-import { Heart, Compass, Lightbulb, Fingerprint, ChevronLeft, ChevronRight } from "lucide-react";
+import { Heart, Compass, ChevronLeft, ChevronRight } from "lucide-react";
 
 const cardConfig = [
   { 
-    key: "feels", 
+    key: "feels_like", 
     title: "What This Feels Like", 
     icon: Heart,
     gradient: "linear-gradient(145deg, #FFDDD2 0%, #FFF0EB 100%)",
     shadow: "rgba(255, 180, 169, 0.3)"
   },
   { 
-    key: "stuck", 
-    title: "Where You're Stuck", 
+    key: "underneath", 
+    title: "What's Underneath This", 
     icon: Compass,
     gradient: "linear-gradient(145deg, #E0D4FC 0%, #F0EBFF 100%)",
     shadow: "rgba(224, 212, 252, 0.3)"
-  },
-  { 
-    key: "believe", 
-    title: "What You Believe Right Now", 
-    icon: Lightbulb,
-    gradient: "linear-gradient(145deg, #C1D0C6 0%, #E0EBE4 100%)",
-    shadow: "rgba(193, 208, 198, 0.3)"
-  },
-  { 
-    key: "matters", 
-    title: "Why This Matters to You", 
-    icon: Fingerprint,
-    gradient: "linear-gradient(145deg, #FFE4D6 0%, #FFF5F0 100%)",
-    shadow: "rgba(255, 200, 180, 0.3)"
   }
 ];
+
+const SHOWN_SECTIONS = ["What This Feels Like", "What's Underneath This"];
 
 const JourneyCards = ({ sections, onComplete }) => {
   const [currentCard, setCurrentCard] = useState(0);
@@ -40,14 +28,19 @@ const JourneyCards = ({ sections, onComplete }) => {
   const [showSwipeHint, setShowSwipeHint] = useState(true);
   const [tapPulse, setTapPulse] = useState(false);
 
+  const visibleSections = (sections || []).filter(section =>
+    SHOWN_SECTIONS.some(title =>
+      section.title.toLowerCase().includes(title.toLowerCase()) ||
+      title.toLowerCase().includes(section.title.toLowerCase())
+    )
+  );
+
   const getSectionContent = (key) => {
     const mapping = {
-      "feels": "Feels Like",
-      "stuck": "Stuck",
-      "believe": "Believe",
-      "matters": "Matters"
+      "feels_like": "What This Feels Like",
+      "underneath": "What's Underneath This"
     };
-    const section = sections.find(s => s.title.toLowerCase().includes(mapping[key]?.toLowerCase() || ""));
+    const section = visibleSections.find(s => s.title.toLowerCase().includes((mapping[key] || key).toLowerCase()));
     return section?.content || "Something here is worth noticing.";
   };
 

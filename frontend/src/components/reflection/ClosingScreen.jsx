@@ -1,5 +1,95 @@
 import { motion } from "framer-motion";
 
+// Breathing orbs — placed behind content. Two soft orbs, slow movement, cream palette.
+const BreathingBackground = () => (
+  <div
+    style={{
+      position: "absolute",
+      inset: 0,
+      overflow: "hidden",
+      pointerEvents: "none",
+      zIndex: 0,
+    }}
+  >
+    <motion.div
+      animate={{
+        scale: [1, 1.15, 1],
+        opacity: [0.12, 0.2, 0.12],
+        x: [0, 12, 0],
+        y: [0, -8, 0],
+      }}
+      transition={{
+        duration: 7,
+        repeat: Infinity,
+        ease: "easeInOut",
+      }}
+      style={{
+        position: "absolute",
+        top: "-10%",
+        left: "-15%",
+        width: 380,
+        height: 380,
+        borderRadius: "50%",
+        background:
+          "radial-gradient(ellipse, rgba(180,160,140,0.25) 0%, transparent 70%)",
+        filter: "blur(40px)",
+      }}
+    />
+    <motion.div
+      animate={{
+        scale: [1, 1.1, 1],
+        opacity: [0.1, 0.18, 0.1],
+        x: [0, -10, 0],
+        y: [0, 10, 0],
+      }}
+      transition={{
+        duration: 9,
+        repeat: Infinity,
+        ease: "easeInOut",
+        delay: 2,
+      }}
+      style={{
+        position: "absolute",
+        bottom: "-15%",
+        right: "-10%",
+        width: 320,
+        height: 320,
+        borderRadius: "50%",
+        background:
+          "radial-gradient(ellipse, rgba(160,170,190,0.2) 0%, transparent 70%)",
+        filter: "blur(50px)",
+      }}
+    />
+    <motion.div
+      animate={{
+        scale: [1, 1.08, 1],
+        opacity: [0.06, 0.12, 0.06],
+      }}
+      transition={{
+        duration: 11,
+        repeat: Infinity,
+        ease: "easeInOut",
+        delay: 4,
+      }}
+      style={{
+        position: "absolute",
+        top: "30%",
+        left: "20%",
+        width: 280,
+        height: 280,
+        borderRadius: "50%",
+        background:
+          "radial-gradient(ellipse, rgba(200,185,165,0.2) 0%, transparent 70%)",
+        filter: "blur(60px)",
+      }}
+    />
+  </div>
+);
+
+const TELL_ME_LINE = "Tell me about it when it happens.";
+const NEXT_TIME_LINE =
+  "Next time you open REFLECT, I have something to show you about what you wrote today.";
+
 const ClosingScreen = ({
   closingText,
   isLoading,
@@ -14,22 +104,48 @@ const ClosingScreen = ({
   const uncomfortableTruth = movements[0] || displayText;
   const takeaway = movements[1] || null;
 
+  // Movement 2: extract watch-for sentence by removing the two fixed lines
+  const watchForSentence = takeaway
+    ? takeaway
+        .replace(TELL_ME_LINE, "")
+        .replace(NEXT_TIME_LINE, "")
+        .replace(/\n+/g, " ")
+        .trim()
+    : "";
+
+  const sentenceVariants = {
+    hidden: { opacity: 0, y: 12 },
+    visible: (i) => ({
+      opacity: i === 2 ? 0.6 : 1,
+      y: 0,
+      transition: {
+        delay: i * 0.4 + 0.3,
+        duration: 0.7,
+        ease: [0.25, 0.1, 0.25, 1],
+      },
+    }),
+  };
+
   return (
     <motion.div
       initial={{ opacity: 0, y: 16 }}
       animate={{ opacity: 1, y: 0 }}
       exit={{ opacity: 0 }}
       transition={{ duration: 0.8, ease: "easeOut" }}
-      className="w-full max-w-xl flex flex-col items-center text-center py-12 px-8 relative"
+      className="w-full max-w-xl flex flex-col items-center text-center py-12 px-8"
+      style={{ position: "relative" }}
       data-testid="closing-screen"
     >
-      {/* Calm, static "ending" background — warm fade, no motion */}
-      <div
-        className="absolute inset-0 -z-10"
-        style={{
-          background: "radial-gradient(ellipse 80% 70% at 50% 40%, rgba(255, 248, 240, 0.6) 0%, rgba(255, 235, 220, 0.25) 40%, rgba(252, 248, 245, 0.1) 100%)",
-        }}
-      />
+      <BreathingBackground />
+
+      <div style={{ position: "relative", zIndex: 1 }}>
+        {/* Calm, static "ending" background — warm fade, no motion */}
+        <div
+          className="absolute inset-0 -z-10"
+          style={{
+            background: "radial-gradient(ellipse 80% 70% at 50% 40%, rgba(255, 248, 240, 0.6) 0%, rgba(255, 235, 220, 0.25) 40%, rgba(252, 248, 245, 0.1) 100%)",
+          }}
+        />
 
       {/* Content card — warmer, soft glow like last page */}
       <div
@@ -61,12 +177,15 @@ const ClosingScreen = ({
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.5 }}
             >
-              <p
+              <motion.p
+                initial={{ opacity: 0, y: 16 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.8, ease: [0.25, 0.1, 0.25, 1] }}
                 className="text-[#4A5568] leading-relaxed"
                 style={{ fontSize: "1.5rem", lineHeight: 1.6 }}
               >
                 {uncomfortableTruth}
-              </p>
+              </motion.p>
             </motion.div>
 
             {/* Divider */}
@@ -78,7 +197,7 @@ const ClosingScreen = ({
               />
             )}
 
-            {/* Movement 2 — The Takeaway */}
+            {/* Movement 2 — The Takeaway: watch-for sentence, fixed "Tell me...", fixed "Next time..." */}
             {takeaway && (
               <motion.div
                 className="closing-takeaway"
@@ -92,17 +211,66 @@ const ClosingScreen = ({
                 >
                   something to sit with
                 </span>
-                <p
-                  className="text-[#718096] leading-relaxed"
+                <div
+                  className="text-[#718096]"
                   style={{
                     fontFamily: "'Fraunces', serif",
                     fontWeight: 300,
                     fontSize: "1.125rem",
-                    lineHeight: 1.7,
                   }}
                 >
-                  {takeaway}
-                </p>
+                  {/* Watch for sentence */}
+                  {watchForSentence && (
+                    <motion.p
+                      custom={0}
+                      variants={sentenceVariants}
+                      initial="hidden"
+                      animate="visible"
+                      style={{
+                        fontSize: "inherit",
+                        lineHeight: 1.7,
+                        margin: 0,
+                        marginBottom: 20,
+                      }}
+                    >
+                      {watchForSentence}
+                    </motion.p>
+                  )}
+
+                  {/* Tell me about it */}
+                  <motion.p
+                    custom={1}
+                    variants={sentenceVariants}
+                    initial="hidden"
+                    animate="visible"
+                    style={{
+                      fontSize: "inherit",
+                      lineHeight: 1.7,
+                      margin: 0,
+                      marginTop: 20,
+                      fontWeight: 500,
+                    }}
+                  >
+                    {TELL_ME_LINE}
+                  </motion.p>
+
+                  {/* Next time hook */}
+                  <motion.p
+                    custom={2}
+                    variants={sentenceVariants}
+                    initial="hidden"
+                    animate="visible"
+                    style={{
+                      fontSize: "0.9em",
+                      lineHeight: 1.7,
+                      margin: 0,
+                      marginTop: 12,
+                      opacity: 0.6,
+                    }}
+                  >
+                    {NEXT_TIME_LINE}
+                  </motion.p>
+                </div>
               </motion.div>
             )}
           </div>
@@ -134,6 +302,7 @@ const ClosingScreen = ({
           </button>
         </motion.div>
       )}
+      </div>
     </motion.div>
   );
 };

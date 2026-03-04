@@ -76,9 +76,27 @@ def get_weekly_insight_letter(reflections_summary: str) -> str:
     return _get_insight_letter(reflections_summary)
 
 
-def get_closing(thought: str, answers: list | dict, mirror: str, mood_word: str | None, reflection_mode: str = "gentle", user_context: dict | None = None, pattern_history: list[dict] | None = None) -> str:
-    """Generate a closing moment with named truth + open thread. Under 60 words. Same signature for all providers."""
-    return _get_closing(thought, answers, mirror, mood_word, reflection_mode, user_context=user_context, pattern_history=pattern_history)
+def get_closing(
+    thought: str,
+    answers: list | dict,
+    mirror: str,
+    mood_word: str | None,
+    reflection_mode: str = "gentle",
+    user_context: dict | None = None,
+    pattern_history: list[dict] | None = None,
+    mirror_report_context: str | None = None,
+) -> str:
+    """Generate a closing moment with named truth + open thread. Under 70 words. Same signature for all providers."""
+    return _get_closing(
+        thought,
+        answers,
+        mirror,
+        mood_word,
+        reflection_mode,
+        user_context=user_context,
+        pattern_history=pattern_history,
+        mirror_report_context=mirror_report_context,
+    )
 
 
 def convert_moods_to_feelings(mood_metaphors: list[str]) -> list[dict]:

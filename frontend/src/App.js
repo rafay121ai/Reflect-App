@@ -943,6 +943,8 @@ function App() {
           {appState === STATES.REFLECTION && reflection && !viewingReflectionId && (
             <ReflectionFlow
               key="reflection"
+              apiBase={API}
+              accessToken={session?.access_token ?? null}
               sections={reflection.sections}
               originalThought={thought}
               reflectionId={reflection.id ?? null}

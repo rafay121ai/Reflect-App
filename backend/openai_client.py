@@ -7,9 +7,12 @@ import json
 import logging
 import os
 import re
+import time
+
 import httpx
 
-from ollama_client import (
+from archetypes import ARCHETYPES
+from llm_shared import (
     _parse_sections,
     _parse_mood_json,
     MOOD_SUGGESTIONS_FALLBACK,
@@ -23,33 +26,73 @@ OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "").strip()
 OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini").strip() or "gpt-4o-mini"
 
 
-def _chat(prompt: str, system: str | None = None) -> str:
-    """Send a prompt to OpenAI and return the assistant message content."""
+def _chat(prompt: str, system: str | None = None, max_retries: int = 2) -> str:
+    """
+    Send a prompt to OpenAI with exponential backoff retry.
+    Retries on 429 (rate limit) and 503 (service unavailable).
+    """
     if not OPENAI_API_KEY:
         raise ValueError("OPENAI_API_KEY is not set")
+
     messages = []
     if system:
         messages.append({"role": "system", "content": system})
     messages.append({"role": "user", "content": prompt})
 
-    with httpx.Client(timeout=120.0) as client:
-        r = client.post(
-            "https://api.openai.com/v1/chat/completions",
-            headers={
-                "Authorization": f"Bearer {OPENAI_API_KEY}",
-                "Content-Type": "application/json",
-            },
-            json={
-                "model": OPENAI_MODEL,
-                "messages": messages,
-            },
-        )
-        r.raise_for_status()
-        data = r.json()
-        choice = (data.get("choices") or [None])[0]
-        if not choice:
-            return ""
-        return (choice.get("message") or {}).get("content") or ""
+    last_error = None
+    for attempt in range(max_retries + 1):
+        try:
+            with httpx.Client(timeout=120.0) as client:
+                r = client.post(
+                    "https://api.openai.com/v1/chat/completions",
+                    headers={
+                        "Authorization": f"Bearer {OPENAI_API_KEY}",
+                        "Content-Type": "application/json",
+                    },
+                    json={
+                        "model": OPENAI_MODEL,
+                        "messages": messages,
+                    },
+                )
+
+                if r.status_code in (429, 503) and attempt < max_retries:
+                    wait = (2 ** attempt) + 0.5
+                    logger.warning(
+                        "OpenAI %s on attempt %d, retrying in %.1fs",
+                        r.status_code,
+                        attempt + 1,
+                        wait,
+                    )
+                    time.sleep(wait)
+                    last_error = r.status_code
+                    continue
+
+                r.raise_for_status()
+                data = r.json()
+                choice = (data.get("choices") or [None])[0]
+                if not choice:
+                    return ""
+                return (choice.get("message") or {}).get("content") or ""
+
+        except httpx.TimeoutException as e:
+            if attempt < max_retries:
+                wait = (2 ** attempt) + 0.5
+                logger.warning(
+                    "OpenAI timeout on attempt %d, retrying in %.1fs",
+                    attempt + 1,
+                    wait,
+                )
+                time.sleep(wait)
+                last_error = e
+                continue
+            raise
+
+        except Exception as e:
+            raise
+
+    raise Exception(
+        f"OpenAI failed after {max_retries + 1} attempts. Last error: {last_error}"
+    )
 
 
 # ============================================================================
@@ -247,6 +290,7 @@ The rule: say the plain thing first.
 Then if one image makes it sharper — use it.
 If it doesn't make it sharper — cut it.""",
         "section_length": {
+            "whats_here": "2-4 short sentences",
             "feels_like": "1-2 short sentences",
             "stuck": "1-2 short sentences",
             "believe": "1 sentence",
@@ -314,6 +358,7 @@ The rule: say the plain thing first.
 Then if one image makes it sharper — use it.
 If it doesn't make it sharper — cut it.""",
         "section_length": {
+            "whats_here": "2-3 short sentences",
             "feels_like": "1 sentence",
             "stuck": "1 sentence",
             "believe": "1 sentence",
@@ -381,6 +426,7 @@ The rule: say the plain thing first.
 Then if one image makes it sharper — use it.
 If it doesn't make it sharper — cut it.""",
         "section_length": {
+            "whats_here": "1-2 short sentences",
             "feels_like": "1 short sentence",
             "stuck": "1 short sentence",
             "believe": "1 short sentence or fragment",
@@ -541,50 +587,35 @@ def get_reflection(thought: str, reflection_mode: str = "gentle", user_context: 
     
     # Step 2: Generate adaptive questions based on type
     adaptive_questions = _generate_adaptive_questions(thought, conversation_type, mode)
-    questions_text = "\n".join([f"- {q}" for q in adaptive_questions])
 
     prompt = f'''Thought: "{thought}"
 
 {personalization_block}
 
-Create exactly 6 reflection sections. Speak TO them using "you." Be SHORT. Use SIMPLE English only—no complex or fancy words. Aim for specific, subtle, personal. The kind of line that lands like a shiver.
-
-CRITICAL: Keep each section brief. One or two short sentences per section (except the mirror: 2-3 max). If you can say it in fewer words, do. No padding.
+Create exactly 2 reflection sections. Speak TO them using "you."
+Be SHORT. Simple English only. Specific and subtle.
+One or two sentences per section maximum.
 
 ## What This Feels Like
 ({lengths["feels_like"]})
-The feeling under the thought. Simple words. "You're..." or "This feels like..."
-e.g. "You're holding a lot with nowhere to set it down." / "There's a tightness here, like you're bracing for something."
+The feeling under the thought. Simple words.
+"You're..." or "This feels like..."
+Not a summary of what they wrote. The emotion underneath it.
+e.g. "You're holding something you haven't been able to set down."
 
-## Where You're Stuck
-({lengths["stuck"]})
-Where their thinking is circling. One clear line. e.g. "You keep going back to what already happened, looking for a different answer."
-
-## What You Believe Right Now
+## What's Underneath This
 ({lengths["believe"]})
-One quiet belief under the thought. "You're believing that..." or "There's an assumption here that..." One sentence.
+One quiet belief or assumption sitting under the thought.
+Something they didn't say directly but that's clearly there.
+"There's a belief here that..." or "Underneath this is..."
+One sentence. Slightly surprising. Not obvious.
+e.g. "There's a belief here that feeling it fully would make it more real."
 
-## Why This Matters to You
-({lengths["matters"]})
-What this really touches—connection, safety, being enough, time. Simple words. One or two sentences. Use "you."
+OUTPUT FORMAT: Start each section with exactly ## SectionName.
+Use these exact headers:
+## What This Feels Like
+## What's Underneath This'''
 
-## Some Things to Notice
-Use these exact questions (one per line):
-{questions_text}
-
-## A Mirror
-({lengths["mirror"]})
-Read everything they wrote very carefully.
-Find the thing they're revealing about themselves WITHOUT knowing it.
-Not the surface feeling. The thing underneath.
-What kind of person writes this exact thought, in these exact words?
-What does the WAY they wrote it (not just what they wrote) tell you?
-Use THEIR specific words and details — nothing generic survives here.
-One or two sentences. Make it land like recognition.
-
-CRITICAL: Write the actual reflection content only. No instructions, no examples in your output. Short and simple.
-
-OUTPUT FORMAT: You MUST start each section with a line containing exactly ## SectionName (e.g. ## What This Feels Like), then the content on the next lines. Use these exact section headers: ## What This Feels Like, ## Where You're Stuck, ## What You Believe Right Now, ## Why This Matters to You, ## Some Things to Notice, ## A Mirror.'''
 
     raw = _chat(prompt, system=config["system"])
     if not (raw and raw.strip()):
@@ -595,11 +626,7 @@ OUTPUT FORMAT: You MUST start each section with a line containing exactly ## Sec
 
     required = [
         ("What This Feels Like", "feels like", "Something here is worth noticing. Take a breath."),
-        ("Where You're Stuck", "stuck", "There's a place you're circling. No need to fix it yet."),
-        ("What You Believe Right Now", "believe", "One quiet belief is sitting in this. You can just notice it."),
-        ("Why This Matters to You", "matters", "This touches something that matters to you. That's enough to name."),
-        ("Some Things to Notice", "notice", "\n".join(adaptive_questions) if adaptive_questions else "What do you notice right now?\nWhat feels most important?\nWhat do you need?"),
-        ("A Mirror", "mirror", raw.strip() if raw.strip() else "What you shared is worth sitting with. Be gentle with yourself."),
+        ("What's Underneath This", "underneath", "There's a quiet belief sitting in this. You can just notice it."),
     ]
     instruction_phrases = (
         "1 sentence", "talk to them", "don't describe", "direct address only",
@@ -619,6 +646,11 @@ OUTPUT FORMAT: You MUST start each section with a line containing exactly ## Sec
             result.append({"title": match["title"], "content": match["content"]})
         else:
             result.append({"title": title, "content": default_content})
+    # Questions are generated by _generate_adaptive_questions; inject so frontend questions flow is unchanged
+    result.append({
+        "title": "Some Things to Notice",
+        "content": "\n".join(adaptive_questions) if adaptive_questions else "What do you notice right now?\nWhat feels most important?\nWhat do you need?",
+    })
     return result
 
 
@@ -743,11 +775,196 @@ Reference the pattern without naming it explicitly. Make them feel genuinely kno
     return _chat(prompt, system=system).strip() or "What you shared matters. Take a moment to be with it."
 
 
-def get_closing(thought: str, answers: list | dict, mirror: str, mood_word: str | None, reflection_mode: str = "gentle", user_context: dict | None = None, pattern_history: list[dict] | None = None) -> str:
+def get_mirror_report(
+    thought: str,
+    questions: list[str],
+    answers: list[str],
+    user_context: dict | None = None,
+    pattern_history: list[dict] | None = None,
+) -> dict:
     """
-    Generate a closing moment for the reflection experience.
-    Returns two movements: THE UNCOMFORTABLE TRUTH and THE PERSONAL INSIGHT.
-    Under 60 words total. Flows as one piece.
+    Generate the 4-slide mirror report.
+    
+    Returns:
+    {
+        "archetype": {
+            "name": str,
+            "description": str,
+            "traits": list[str]
+        },
+        "shaped_by": str,        # Slide 2: what produced this thought
+        "costing_you": str,      # Slide 3: what this pattern costs them
+        "question": str,         # Slide 4: the one opening question
+    }
+    """
+    personalization_block = _build_personalization_block(
+        user_context, pattern_history
+    )
+    
+    # Build Q&A text
+    qa_text = ""
+    for i, q in enumerate(questions):
+        a = answers[i] if i < len(answers) else ""
+        qa_text += f"Q: {q}\nA: {a}\n\n"
+    
+    # Build archetype list for selection
+    archetype_list = "\n".join([
+        f"{i+1}. {a['name']} — {a['description'].split('.')[0]}."
+        for i, a in enumerate(ARCHETYPES)
+    ])
+    
+    # Stage 1: Select archetype
+    archetype_system = """You match people to archetypes based on how they think and write.
+    
+You are reading between the lines — not just what they said, 
+but how they said it. Word choice, what they included, 
+what they left out, how they framed things.
+
+Output ONLY a valid JSON object. No markdown. No explanation.
+{"archetype_number": 3}"""
+
+    archetype_prompt = f"""The person wrote this thought:
+"{thought}"
+
+They answered these questions:
+{qa_text}
+
+{personalization_block if personalization_block else ""}
+
+Available archetypes:
+{archetype_list}
+
+Read everything carefully. Which archetype fits most precisely?
+Not which fits best in general — which fits THIS person 
+based on HOW they wrote and what they revealed in their answers.
+
+Output ONLY: {{"archetype_number": N}}"""
+
+    try:
+        raw = _chat(archetype_prompt, system=archetype_system).strip()
+        if raw.startswith("```"):
+            raw = raw.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
+        data = json.loads(raw)
+        archetype_idx = int(data.get("archetype_number", 1)) - 1
+        archetype_idx = max(0, min(archetype_idx, len(ARCHETYPES) - 1))
+        selected_archetype = ARCHETYPES[archetype_idx]
+    except Exception as e:
+        logger.warning("Archetype selection failed: %s", type(e).__name__)
+        selected_archetype = ARCHETYPES[0]
+    
+    # Stage 2: Generate slides 2, 3, 4
+    report_system = """You write the mirror report for REFLECT — 
+a private journaling app.
+
+Your job: name what this thought reveals about how this person 
+was shaped. Not what they feel. Who they are. How they got here.
+
+VOICE — this is the most important rule:
+90% plain direct English. 10% poetic — one image or phrase 
+that sharpens the plain truth. No more.
+Write like you're speaking directly to someone's face.
+No metaphors that need decoding. No therapy language.
+If a sentence could apply to anyone else — rewrite it.
+Specific always beats general.
+
+Good tone example:
+"You didn't learn to do everything alone because you're 
+independent. You learned it because needing people kept 
+not working out. The self-sufficiency is the scar tissue."
+
+Bad tone example:
+"You carry the weight of your experiences like stones 
+in a river, shaped by the current of time."
+
+Output ONLY valid JSON. No markdown. No explanation."""
+
+    report_prompt = f"""The person wrote:
+"{thought}"
+
+Their answers:
+{qa_text}
+
+Their archetype: {selected_archetype['name']}
+Archetype description: {selected_archetype['description']}
+
+{personalization_block if personalization_block else ""}
+
+Generate exactly three things. Output as JSON:
+
+1. "shaped_by" — 3-4 sentences.
+What experience, belief system, or way of being in the world 
+produced this exact thought?
+Not what they feel right now — what FORMED them such that 
+they think this way.
+Read between the lines of how they wrote, not just what they wrote.
+Specific. Slightly uncomfortable. About who they ARE.
+The kind of thing that makes someone go quiet.
+Plain language. One sharp image if it earns its place.
+Never start with "You've" or "You have".
+Start with "You" followed by a present-tense verb.
+
+2. "costing_you" — 2 sentences.
+What is this pattern or way of thinking taking from them?
+Not a judgment. An honest observation about the tradeoff.
+The upside of the pattern AND what it costs.
+Plain. Direct. Warm but not soft.
+e.g. "The upside is you never get blindsided. 
+The cost is you're always bracing."
+
+3. "question" — 1 question only.
+Not advice. Not a prompt to fix anything.
+The question that opens something they haven't asked themselves.
+The kind that stays with them.
+Plain English. Under 20 words.
+Should feel slightly uncomfortable to sit with.
+e.g. "What would you do differently if you trusted that 
+people could handle the real version of you?"
+
+Output format:
+{{
+  "shaped_by": "...",
+  "costing_you": "...",
+  "question": "..."
+}}"""
+
+    try:
+        raw = _chat(report_prompt, system=report_system).strip()
+        if raw.startswith("```"):
+            raw = raw.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
+        if "{" in raw and "}" in raw:
+            start = raw.index("{")
+            end = raw.rindex("}") + 1
+            raw = raw[start:end]
+        slides = json.loads(raw)
+    except Exception as e:
+        logger.warning("Mirror report generation failed: %s", type(e).__name__)
+        slides = {
+            "shaped_by": "What you wrote carries more than the situation. It carries a way of being in the world that didn't arrive by accident.",
+            "costing_you": "The upside is you're rarely caught off guard. The cost is the constant readiness.",
+            "question": "What would you let yourself feel if you weren't watching how you felt?",
+        }
+    
+    return {
+        "archetype": selected_archetype,
+        "shaped_by": slides.get("shaped_by", ""),
+        "costing_you": slides.get("costing_you", ""),
+        "question": slides.get("question", ""),
+    }
+
+
+def get_closing(
+    thought: str,
+    answers: list | dict,
+    mirror: str,
+    mood_word: str | None,
+    reflection_mode: str = "gentle",
+    user_context: dict | None = None,
+    pattern_history: list[dict] | None = None,
+    mirror_report_context: str | None = None,
+) -> str:
+    """
+    Generate the final closing moment for a reflection.
+    Two movements with a blank line between them.
     """
     personalization_block = _build_personalization_block(user_context, pattern_history)
 
@@ -758,85 +975,67 @@ def get_closing(thought: str, answers: list | dict, mirror: str, mood_word: str 
         answers_text = "\n".join([f"- {a}" for a in answers if a])
     else:
         answers_text = str(answers) if answers else "No specific answers provided."
-    
-    mood_text = mood_word or "neutral"
-    
-    system = """You write the closing moment of a private reflection experience.
 
-Two movements. No labels. No headers. Each stands alone.
+    mood_text = mood_word or "neutral"
+
+    system = """You write the closing moment of a private reflection.
+
+Two movements. No labels. No headers. Blank line between them.
 
 MOVEMENT 1 — THE UNCOMFORTABLE TRUTH:
-One sentence. About who they are as a person.
-Not what they felt. Not what happened. WHO THEY ARE.
-It should land like someone finally said the thing out loud.
-Slightly uncomfortable. Specific enough that no one else could receive it.
-The kind of sentence that makes someone go quiet.
-This is completely separate from anything the mirror said.
-The mirror covered feelings. You name the person.
+One sentence. About who this person IS as a person.
+Not what they felt. Not what happened.
+Their character. Their pattern. Their way of being in the world.
+Drawn from everything in this conversation — thought, answers, mirror.
+Specific enough that nobody else could receive this exact sentence.
+Slightly uncomfortable. The kind that makes someone go quiet.
+Completely different from anything in the mirror report.
+The mirror named how they were shaped.
+The closing names who they are right now because of it.
 
-MOVEMENT 2 — THE TAKEAWAY:
-One or two sentences. A personal insight about their thinking,
-their patterns, or their psychology.
-The kind of thing they'll turn over in their mind all night.
-Not a conclusion. A question disguised as an observation.
-Something that makes them look at themselves differently.
-Should feel like a small truth they've been avoiding.
+MOVEMENT 2 — THE WATCH FOR + INVITATION:
+Two or three sentences.
+First: a specific prediction about something that will happen 
+in their real life — tied directly to their pattern from 
+this reflection. Not generic. Not "notice your feelings."
+Something specific enough that when it happens they'll 
+recognize it immediately.
+Second: "Tell me about it when it happens."
+This line is always exactly this. Never change it.
+Third — always on its own line, always exactly this:
+"Next time you open REFLECT, I have something to show you 
+about what you wrote today."
+
+VOICE — non-negotiable:
+90% plain direct English. 10% poetic maximum — one image 
+that sharpens the plain truth. No more than one.
+Write like you're talking directly to someone.
+No metaphors that need decoding.
+No therapy language.
+No poetic filler.
+Simple words. Short sentences.
+Every word does work or it gets cut.
 
 Rules that never break:
-- Never repeat anything from the mirror. Not the theme, not the image,
-  not the emotion. Completely different territory.
-- No advice. No fixing. No reassurance. No "Between now and next time."
-- Speak TO them. Always "you."
-LANGUAGE RULE:
-90% plain, direct English. 10% poetic or metaphorical — used sparingly
-for one moment that earns it.
+- Never repeat anything from the mirror report.
+  Not the theme. Not the image. Not the emotion.
+  Completely different territory.
+- No advice. No fixing. No reassurance.
+- Never use "Between now and next time" — ever.
+- Always "you." Never "they."
+- Movement 1: one sentence, under 20 words.
+- Movement 2: "Tell me about it when it happens." 
+  then new line:
+  "Next time you open REFLECT, I have something to show you 
+  about what you wrote today."
+- Total under 70 words.
 
-The default is simple. Every sentence should be immediately understood.
-Plain words. Short sentences. Write like you're talking to someone directly.
-
-The 10% poetic is ONE image or phrase per closing — not every sentence.
-It should feel like a small unexpected detail that makes the plain
-truth land harder. Not decoration. Not atmosphere. A sharpener.
-
-Good example of the balance:
-"You're the one in the room who actually thinks about what's coming.
-You wonder if being the serious one is just loneliness with better posture."
-
-— First sentence: completely plain.
-— Second sentence: one light metaphor ("loneliness with better posture")
-  that sharpens the plain idea. Earns its place.
-
-Bad example — too metaphorical:
-"You silently measure how far your reality drifts from the
-collective story around you."
-Every word is doing poetic work. Nothing lands because
-nothing is plain enough to grip.
-
-Bad example — too plain, no edge:
-"You feel alone in your worry. Others don't seem to care as much."
-True but flat. The 10% poetic is what gives it an edge.
-
-The rule: say the plain thing first.
-Then if one image makes it sharper — use it.
-If it doesn't make it sharper — cut it.
-
-- Movement 1: under 20 words. One sentence maximum.
-- Movement 2: under 40 words. One or two sentences maximum.
-- Total: under 60 words.
-- The whole closing should feel like: "How did it know that about me."
-
-The test for Movement 1:
-- Is it about who they ARE, not what they felt?
-- Is it completely different from the mirror?
-- Would it make them pause mid-scroll?
-If any answer is no — rewrite it.
-
-The test for Movement 2:
-- Will they think about this tonight?
-- Does it reveal something about their psychology or thinking patterns?
-- Does it end open — not resolved, not advised?
-If any answer is no — rewrite it.
-"""
+The test:
+Movement 1 — could it have been written for anyone else? 
+If yes — rewrite it.
+Movement 2 watch for — is it specific enough that they'll 
+know exactly when it happens? If no — rewrite it.
+Does anything repeat the mirror? If yes — rewrite entirely."""
 
     prompt = f"""The person wrote this thought:
 "{thought}"
@@ -844,50 +1043,52 @@ If any answer is no — rewrite it.
 Their answers through the reflection:
 {answers_text}
 
-The mirror they already received (DO NOT REPEAT ANYTHING FROM THIS):
-"{mirror}"
+The mirror report they received — DO NOT REPEAT ANYTHING FROM THIS:
+Archetype: {mirror_report_context if mirror_report_context else "not available"}
 
 Their mood: {mood_text}
 
 {personalization_block if personalization_block else ""}
 
-Write the closing. Two movements. Separated by a blank line. No labels.
+Write the closing. Two movements. Blank line between them.
+No labels. No headers.
 
 MOVEMENT 1 — one sentence, under 20 words:
-What does everything they wrote reveal about WHO THIS PERSON IS?
-Not their feelings — their character, their patterns, their psychology.
-The thing that's true about them that they haven't named.
-Make it land like recognition. Make it slightly uncomfortable.
+What does EVERYTHING in this conversation — the thought, 
+the answers, the way they wrote — reveal about who this 
+person IS right now?
+Not their archetype. Not how they were shaped.
+Who they ARE because of it. Today. In this moment.
+Say it directly. Plain words.
+Make it slightly uncomfortable.
+Make it impossible to receive if you hadn't read every word 
+they wrote.
 
-Examples of the quality and specificity you're going for:
-- "You're the one keeping score of who's taking this seriously —
-   including yourself."
-- "You already know the answer — you just want permission not to choose it."
-- "The joking isn't distance. It's how you buy yourself time to feel it
-   properly."
+MOVEMENT 2 — the watch for + invitation:
+First sentence: predict one specific thing that will happen 
+in their real life this week or soon — tied directly to their 
+pattern in this reflection.
+Not "notice your emotions." Something concrete and specific.
+Something they'll recognize the moment it happens.
 
-MOVEMENT 2 — one to two sentences, under 40 words:
-What insight about their thinking or psychology emerges from this
-entire conversation?
-The kind of thing they'll turn over in their mind all night.
-A small truth about how they think, what they protect, or what
-they keep returning to — that they probably haven't said out loud.
+Then exactly: "Tell me about it when it happens."
 
-Examples of the quality and specificity you're going for:
-- "What if the doubt you judge in them lives equally in you?"
-- "You process danger by naming it. The joke is the naming."
-- "You hold space for other people's fear better than your own."
+Then exactly on a new line:
+"Next time you open REFLECT, I have something to show you 
+about what you wrote today."
 
 CRITICAL CHECKS before outputting:
-1. Is Movement 1 completely different from the mirror above?
-   If it touches the same theme or emotion — rewrite it.
-2. Does Movement 1 name who they ARE, not how they feel?
-   If not — rewrite it.
-3. Will Movement 2 stay with them tonight?
-   If it feels like a summary or advice — rewrite it.
-4. Is the total under 60 words? If not — cut ruthlessly.
-
-Output two movements separated by a blank line. Nothing else."""
+1. Is Movement 1 completely different from the mirror report?
+   Zero overlap in theme, image, or emotion? If not — rewrite.
+2. Is Movement 1 about who they ARE — not how they feel 
+   or what happened? If not — rewrite.
+3. Is the watch for specific enough that they'll know 
+   exactly when it happens? If not — rewrite.
+4. Does "Tell me about it when it happens." appear exactly?
+5. Does "Next time you open REFLECT, I have something to 
+   show you about what you wrote today." appear exactly 
+   on its own line?
+6. Under 70 words total? If not — cut ruthlessly."""
 
     try:
         result = _chat(prompt, system=system).strip()
@@ -895,7 +1096,7 @@ Output two movements separated by a blank line. Nothing else."""
             return result
     except Exception as e:
         logger.warning("Closing generation failed: %s", e)
-    
+
     # Fallback
     return "You showed up today. That matters. What you're already carrying is worth your attention."
 

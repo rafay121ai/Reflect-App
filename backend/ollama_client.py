@@ -614,7 +614,20 @@ Rules that don't break:
 - No complex words. Language a tired person at midnight would still feel.
 - No summarizing what they said back at them.
 - Vulnerability in tone — you're curious, not certain. You notice, you don't declare.
-- The mirror is specific to THEM. Nothing generic survives here."""
+- The mirror is specific to THEM. Nothing generic survives here.
+
+LANGUAGE RULE:
+90% plain direct English. 10% poetic maximum.
+One image or phrase that sharpens the plain truth — not decoration.
+Write like you're speaking directly to someone's face.
+No metaphors that need decoding.
+No therapy language. No flowery words.
+If a sentence needs to be read twice to understand — rewrite it.
+The simpler it is, the harder it lands.
+Good: "You didn't choose independence. You chose it because
+needing people kept not working out."
+Bad: "You carry the architecture of your solitude like a
+blueprint drawn in early morning light.\"\"\""
 
     prompt = f"""The person shared this thought:
 {thought}
@@ -657,7 +670,16 @@ Reference the pattern without naming it explicitly. Make them feel genuinely kno
     return _chat(prompt, system=system).strip() or "What you shared matters. Take a moment to be with it."
 
 
-def get_closing(thought: str, answers: list | dict, mirror: str, mood_word: str | None, reflection_mode: str = "gentle", user_context: dict | None = None, pattern_history: list[dict] | None = None) -> str:
+def get_closing(
+    thought: str,
+    answers: list | dict,
+    mirror: str,
+    mood_word: str | None,
+    reflection_mode: str = "gentle",
+    user_context: dict | None = None,
+    pattern_history: list[dict] | None = None,
+    mirror_report_context: str | None = None,
+) -> str:
     """
     Generate a closing moment for the reflection experience.
     Returns two movements: THE NAMED TRUTH and THE OPEN THREAD.
@@ -701,6 +723,19 @@ Rules:
 - Speak TO them. Always "you."
 - Simple language. Under 60 words total.
 - The whole thing should feel like: "How did it know that."
+
+LANGUAGE RULE:
+90% plain direct English. 10% poetic maximum.
+One image or phrase that sharpens the plain truth — not decoration.
+Write like you're speaking directly to someone's face.
+No metaphors that need decoding.
+No therapy language. No flowery words.
+If a sentence needs to be read twice to understand — rewrite it.
+The simpler it is, the harder it lands.
+Good: "You didn't choose independence. You chose it because
+needing people kept not working out."
+Bad: "You carry the architecture of your solitude like a
+blueprint drawn in early morning light.\"\"\""
 """
 
     prompt = f"""The person wrote this thought:
