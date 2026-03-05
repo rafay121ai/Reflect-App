@@ -225,6 +225,15 @@ function App() {
       .catch(() => setUsage(null));
   }, [user?.id, authRequired]);
 
+  // Refetch usage when opening Settings so web LS subscription state is up to date
+  const refetchUsage = () => {
+    if (!user?.id || !authRequired) return;
+    axios
+      .get(`${API}/usage`, { headers: getAuthHeaders() })
+      .then((res) => setUsage(res.data || null))
+      .catch(() => setUsage(null));
+  };
+
   // Show trial welcome modal once when coming from ?welcome=trial
   useEffect(() => {
     if (!user || !authRequired) return;
@@ -855,8 +864,10 @@ function App() {
         {settingsPanelOpen && (
           <SettingsPanel
               apiBase={API}
+              usage={usage}
               onClose={() => setSettingsPanelOpen(false)}
               onOpenSignIn={() => { setSettingsPanelOpen(false); setShowSignInModal(true); }}
+              onRefetchUsage={refetchUsage}
             />
         )}
       </AnimatePresence>

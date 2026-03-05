@@ -440,6 +440,14 @@ def _do_reflect(body: ReflectRequest, user_id: str | None = None, background_tas
         rc = get_rc_subscription_status(user_id)
         plan_type = (rc.get("plan_type") or "trial").strip().lower()
         period_start_rc = rc.get("period_start")
+        # Web users subscribe via Lemon Squeezy; RC returns trial. Use user_usage when RC is trial.
+        if plan_type == "trial":
+            usage_row = get_user_usage(user_id)
+            if usage_row:
+                stored = (usage_row.get("plan_type") or "").strip().lower()
+                if stored in ("monthly", "yearly"):
+                    plan_type = stored
+                    period_start_rc = usage_row.get("period_start")
         usage_row = enforce_reflection_limit(user_id, plan_type, period_start_rc)
         if usage_row is None:
             return JSONResponse(
@@ -486,6 +494,12 @@ def _do_reflect(body: ReflectRequest, user_id: str | None = None, background_tas
         if user_id:
             rc = get_rc_subscription_status(user_id)
             plan_type = (rc.get("plan_type") or "trial").strip().lower()
+            if plan_type == "trial":
+                usage_row = get_user_usage(user_id)
+                if usage_row:
+                    stored = (usage_row.get("plan_type") or "").strip().lower()
+                    if stored in ("monthly", "yearly"):
+                        plan_type = stored
             rollback_reflection_usage(user_id, plan_type)
         logging.exception("Reflect failed: %s", type(e).__name__)
         raise HTTPException(status_code=502, detail=_llm_error_message(e))
@@ -510,7 +524,7 @@ async def webhook_lemon_squeezy(
     x_signature: str = Header(None, alias="X-Signature"),
 ):
     import json
-    from supabase_client import update_user_plan
+    from supabase_client import update_user_plan, get_user_id_by_email
 
     payload = await request.body()
 
@@ -524,7 +538,13 @@ async def webhook_lemon_squeezy(
         raise HTTPException(status_code=400, detail="Invalid JSON")
 
     event = parse_subscription_event(body)
-    if not event or not event.get("user_id"):
+    if not event:
+        return {"ok": True}
+
+    user_id = (event.get("user_id") or "").strip()
+    if not user_id and event.get("user_email"):
+        user_id = get_user_id_by_email(event["user_email"])
+    if not user_id:
         return {"ok": True}
 
     # 2. Deduplicate — reject replayed events
@@ -535,7 +555,7 @@ async def webhook_lemon_squeezy(
         return {"ok": True, "skipped": "duplicate"}
 
     # 3. Process subscription change
-    user_id = event["user_id"]
+    user_id = user_id.strip()
     status = event.get("status") or ""
     plan_type = event.get("plan_type") or "monthly"
 
@@ -1162,6 +1182,7 @@ def usage_get(user_id: str = Depends(require_user_id)):
         "trial_expires_at": trial_expires_at,
         "days_remaining": days_remaining,
         "is_expired": is_expired,
+        "is_subscribed": plan_type in ("monthly", "yearly"),
     }
 
 

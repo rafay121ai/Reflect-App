@@ -903,6 +903,28 @@ def get_profile(user_id: str) -> dict | None:
     return None
 
 
+def get_user_id_by_email(email: str) -> str | None:
+    """Look up user_id from profiles by email (e.g. for Lemon Squeezy webhook when custom_data.user_id is missing)."""
+    if not email or not str(email).strip():
+        return None
+    client = _get_client()
+    if not client:
+        return None
+    try:
+        response = (
+            client.table("profiles")
+            .select("user_id")
+            .eq("email", str(email).strip())
+            .limit(1)
+            .execute()
+        )
+        if response.data and len(response.data) > 0:
+            return (response.data[0].get("user_id") or "").strip() or None
+    except Exception as e:
+        logger.warning("Supabase get_user_id_by_email failed: %s", e)
+    return None
+
+
 def upsert_profile(
     user_id: str,
     email: str | None = None,

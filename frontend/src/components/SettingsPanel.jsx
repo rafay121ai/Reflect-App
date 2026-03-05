@@ -180,7 +180,7 @@ const ActionRow = ({ icon: Icon, label, sublabel, onClick, danger, disabled, hre
 };
 
 // Main Settings Panel
-const SettingsPanel = ({ apiBase, onClose, onOpenSignIn }) => {
+const SettingsPanel = ({ apiBase, onClose, onOpenSignIn, usage, onRefetchUsage }) => {
   const { user, signOut } = useAuth();
   const {
     isSupported: isRevenueCatSupported,
@@ -208,6 +208,16 @@ const SettingsPanel = ({ apiBase, onClose, onOpenSignIn }) => {
   };
   const lemon = getLemonVariants();
   const showLemonOnWeb = !isNative() && lemon.isConfigured && user?.id;
+  const isWebSubscribed = !!(usage && usage.is_subscribed === true);
+
+  useEffect(() => {
+    setMode(getReflectionMode());
+  }, []);
+
+  useEffect(() => {
+    if (showLemonOnWeb && onRefetchUsage) onRefetchUsage();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- refetch when Settings panel opens (mount)
+  }, []);
 
   useEffect(() => {
     setMode(getReflectionMode());
@@ -478,27 +488,71 @@ const SettingsPanel = ({ apiBase, onClose, onOpenSignIn }) => {
                       <Crown className="w-5 h-5 text-[#FFB4A9]" />
                     </div>
                     <div>
-                      <p className="text-sm font-medium text-[#4A5568]">Free</p>
-                      <p className="text-xs text-[#94A3B8]">Upgrade for more reflections</p>
+                      {isWebSubscribed ? (
+                        <>
+                          <p className="text-sm font-medium text-[#4A5568]">Premium</p>
+                          <p className="text-xs text-[#94A3B8]">You have full access</p>
+                        </>
+                      ) : (
+                        <>
+                          <p className="text-sm font-medium text-[#4A5568]">Free</p>
+                          <p className="text-xs text-[#94A3B8]">Upgrade for more reflections</p>
+                        </>
+                      )}
                     </div>
                   </div>
                 </div>
-                <button
-                  type="button"
-                  onClick={() =>
-                    openCheckout(
-                      {
-                        variantId: lemon.variantMonthly || lemon.variantYearly,
-                        userId: user?.id,
-                        userEmail: user?.email || "",
-                      },
-                      (err) => err && window.alert?.(err)
-                    )
-                  }
-                  className="w-full py-2.5 px-4 text-sm font-medium rounded-xl bg-[#FFB4A9]/30 text-[#4A5568] hover:bg-[#FFB4A9]/40 border border-[#FFB4A9]/40 transition-colors"
-                >
-                  Upgrade to Premium
-                </button>
+                <div className="flex flex-col gap-1.5">
+                  {isWebSubscribed ? (
+                    <a
+                      href="https://app.lemonsqueezy.com/my-orders"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="w-full flex items-center justify-center gap-2 py-2.5 px-4 text-sm text-[#4A5568] rounded-xl border border-[#E2E8F0]/60 hover:bg-[#F8FAFC]/80 transition-colors"
+                    >
+                      Manage subscription
+                    </a>
+                  ) : (
+                    <>
+                      {lemon.variantMonthly && (
+                        <button
+                          type="button"
+                          onClick={() =>
+                            openCheckout(
+                              {
+                                variantId: lemon.variantMonthly,
+                                userId: user?.id,
+                                userEmail: user?.email || "",
+                              },
+                              (err) => err && window.alert?.(err)
+                            )
+                          }
+                          className="w-full py-2.5 px-4 text-sm font-medium rounded-xl bg-[#FFB4A9]/30 text-[#4A5568] hover:bg-[#FFB4A9]/40 border border-[#FFB4A9]/40 transition-colors"
+                        >
+                          Monthly
+                        </button>
+                      )}
+                      {lemon.variantYearly && (
+                        <button
+                          type="button"
+                          onClick={() =>
+                            openCheckout(
+                              {
+                                variantId: lemon.variantYearly,
+                                userId: user?.id,
+                                userEmail: user?.email || "",
+                              },
+                              (err) => err && window.alert?.(err)
+                            )
+                          }
+                          className="w-full py-2.5 px-4 text-sm font-medium rounded-xl bg-[#FFB4A9]/30 text-[#4A5568] hover:bg-[#FFB4A9]/40 border border-[#FFB4A9]/40 transition-colors"
+                        >
+                          Yearly
+                        </button>
+                      )}
+                    </>
+                  )}
+                </div>
               </div>
             ) : (
               <div className="p-4 rounded-xl bg-[#F8FAFC]/80 border border-[#E2E8F0]/40">

@@ -11,9 +11,15 @@ from supabase_client import _get_client  # type: ignore
 
 logger = logging.getLogger(__name__)
 
-LEMON_SQUEEZY_WEBHOOK_SECRET = (os.getenv("LEMON_SQUEEZY_WEBHOOK_SECRET") or "").strip()
-LS_VARIANT_MONTHLY = (os.getenv("LS_VARIANT_MONTHLY") or "").strip()
-LS_VARIANT_YEARLY = (os.getenv("LS_VARIANT_YEARLY") or "").strip()
+LEMON_SQUEEZY_WEBHOOK_SECRET = (
+    os.getenv("LEMONSQUEEZY_SIGNING_SECRET") or os.getenv("LEMON_SQUEEZY_WEBHOOK_SECRET") or ""
+).strip()
+LS_VARIANT_MONTHLY = (
+    os.getenv("LEMONSQUEEZY_MONTHLY_VARIANT_ID") or os.getenv("LS_VARIANT_MONTHLY") or ""
+).strip()
+LS_VARIANT_YEARLY = (
+    os.getenv("LEMONSQUEEZY_YEARLY_VARIANT_ID") or os.getenv("LS_VARIANT_YEARLY") or ""
+).strip()
 
 VARIANT_TO_PLAN: dict[str, str] = {}
 if LS_VARIANT_MONTHLY:
@@ -23,12 +29,13 @@ if LS_VARIANT_YEARLY:
 
 
 def verify_webhook_signature(payload: bytes, signature: str) -> bool:
-    """Verify Lemon Squeezy webhook signature (HMAC SHA256)."""
-    if not LEMON_SQUEEZY_WEBHOOK_SECRET or not signature:
+    """Verify Lemon Squeezy webhook signature (HMAC SHA256). Uses LEMONSQUEEZY_SIGNING_SECRET or LEMON_SQUEEZY_WEBHOOK_SECRET."""
+    secret = LEMON_SQUEEZY_WEBHOOK_SECRET
+    if not secret or not signature:
         return False
     try:
         expected = hmac.new(
-            LEMON_SQUEEZY_WEBHOOK_SECRET.encode("utf-8"),
+            secret.encode("utf-8"),
             payload,
             hashlib.sha256,
         ).hexdigest()
@@ -62,19 +69,21 @@ def parse_subscription_event(body: dict[str, Any]) -> dict[str, Any] | None:
 
     custom_data = meta.get("custom_data") or {}
     user_id = (custom_data.get("user_id") or "").strip()
-    if not user_id:
-        logger.warning("Lemon Squeezy webhook missing meta.custom_data.user_id")
-        return None
-
     data = body.get("data") or {}
     attrs = data.get("attributes") or {}
+    user_email = (attrs.get("user_email") or "").strip() or None
     variant_id = str(attrs.get("variant_id") or "").strip() or None
     plan_type = VARIANT_TO_PLAN.get(variant_id or "", "monthly")
     status = (attrs.get("status") or "").strip().lower() or ""
 
+    if not user_id and not user_email:
+        logger.warning("Lemon Squeezy webhook missing meta.custom_data.user_id and data.attributes.user_email")
+        return None
+
     return {
         "event_name": event_name,
-        "user_id": user_id,
+        "user_id": user_id or None,
+        "user_email": user_email,
         "variant_id": variant_id,
         "plan_type": plan_type,
         "status": status,
