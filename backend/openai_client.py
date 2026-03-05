@@ -55,7 +55,7 @@ def _chat(prompt: str, system: str | None = None, max_retries: int = 2) -> str:
                     },
                 )
 
-                if r.status_code in (429, 503) and attempt < max_retries:
+                if r.status_code in (429, 500, 503) and attempt < max_retries:
                     wait = (2 ** attempt) + 0.5
                     logger.warning(
                         "OpenAI %s on attempt %d, retrying in %.1fs",
