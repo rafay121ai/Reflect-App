@@ -67,7 +67,7 @@ export default function ScrollRestoration() {
     });
 
     return () => cancelAnimationFrame(id);
-  }, [location.key]);
+  }, [location.key, location.pathname]);
 
   return null;
 }
