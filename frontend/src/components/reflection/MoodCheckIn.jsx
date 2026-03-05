@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
-import { motion } from "framer-motion";
-import { RefreshCw, RotateCcw } from "lucide-react";
+import { motion, AnimatePresence } from "framer-motion";
+import { RefreshCw, RotateCcw, ChevronRight } from "lucide-react";
 import HapticButton from "../ui/HapticButton";
 
 const FALLBACK_SUGGESTIONS = [
@@ -222,9 +222,9 @@ const MoodCheckIn = ({
                   setFreeText("");
                 }}
                 className={`
-                  text-left px-4 py-4 rounded-2xl border transition-all duration-200
+                  text-left px-4 py-4 rounded-2xl border-2 transition-all duration-200
                   ${selected === item.phrase
-                    ? "bg-stone-50 border-stone-300 shadow-[0_2px_8px_rgba(0,0,0,0.04)]"
+                    ? "bg-[#FFE8E4] border-[#FFB4A9] shadow-[0_4px_16px_rgba(255,180,169,0.35)] ring-2 ring-[#FFB4A9]/40"
                     : "bg-white border-stone-200 hover:border-stone-300 hover:bg-stone-50/50"
                   }
                 `}
@@ -233,7 +233,7 @@ const MoodCheckIn = ({
               >
                 <span 
                   className={`block text-[15px] mb-1.5 ${
-                    selected === item.phrase ? "text-stone-800" : "text-stone-700"
+                    selected === item.phrase ? "text-stone-900 font-semibold" : "text-stone-700"
                   }`}
                   style={{ 
                     fontFamily: "'Crimson Pro', serif",
@@ -260,7 +260,7 @@ const MoodCheckIn = ({
         initial={{ opacity: 0, y: 10 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ delay: loadingSuggestions ? 0.1 : 0.4 }}
-        className="w-full max-w-xl mb-8"
+        className="w-full max-w-xl mb-6"
       >
         <input
           type="text"
@@ -270,42 +270,67 @@ const MoodCheckIn = ({
             setFreeText(e.target.value);
             if (e.target.value.trim()) setSelected("");
           }}
-          className="w-full px-5 py-4 rounded-2xl border border-stone-200 bg-white text-stone-700 placeholder-stone-400 focus:outline-none focus:border-stone-400 focus:ring-4 focus:ring-stone-100 transition-all duration-200"
+          className={`w-full px-5 py-4 rounded-2xl border-2 bg-white text-stone-700 placeholder-stone-400 focus:outline-none transition-all duration-200 ${
+            freeText.trim()
+              ? "border-[#FFB4A9] focus:border-[#FFB4A9] focus:ring-4 focus:ring-[#FFB4A9]/20 bg-[#FFE8E4]/30"
+              : "border-stone-200 focus:border-stone-400 focus:ring-4 focus:ring-stone-100"
+          }`}
           style={{ 
             fontFamily: "'Inter', sans-serif",
             fontSize: "15px",
-            boxShadow: "0 1px 2px rgba(0, 0, 0, 0.02)"
+            boxShadow: freeText.trim() ? "0 4px 16px rgba(255,180,169,0.2)" : "0 1px 2px rgba(0, 0, 0, 0.02)"
           }}
           maxLength={80}
           data-testid="mood-free-text"
         />
       </motion.div>
 
-      {/* Action buttons */}
+      {/* Arrow out of mood container when a selection is made */}
+      <AnimatePresence>
+        {displayValue && (
+          <motion.div
+            initial={{ opacity: 0, y: -8, scale: 0.9 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: -8, scale: 0.9 }}
+            transition={{ type: "spring", stiffness: 300, damping: 24 }}
+            className="flex flex-col items-center gap-4 mb-4"
+          >
+            <motion.button
+              type="button"
+              onClick={() => !isSubmitting && handleSubmit()}
+              disabled={!displayValue || isSubmitting}
+              whileHover={!isSubmitting ? { scale: 1.08 } : {}}
+              whileTap={!isSubmitting ? { scale: 0.95 } : {}}
+              className="w-14 h-14 rounded-full flex items-center justify-center text-white shadow-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+              style={{
+                background: "linear-gradient(135deg, #FFB4A9 0%, #E0D4FC 100%)",
+                boxShadow: "0 8px 24px rgba(255, 180, 169, 0.4)"
+              }}
+              data-testid="mood-submit"
+            >
+              <ChevronRight className="w-7 h-7" strokeWidth={2.5} />
+            </motion.button>
+            <p className="text-xs text-stone-400">Tap to continue</p>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Skip option */}
       <motion.div
-        initial={{ opacity: 0, y: 10 }}
-        animate={{ opacity: 1, y: 0 }}
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
         transition={{ delay: loadingSuggestions ? 0.2 : 0.5 }}
-        className="flex flex-col sm:flex-row gap-3 w-full max-w-sm"
+        className="flex justify-center"
       >
-        <HapticButton
-          variant="primary"
-          onClick={handleSubmit}
-          disabled={!displayValue || isSubmitting}
-          data-testid="mood-submit"
-          className="flex-1"
-        >
-          {isSubmitting ? "…" : "Done"}
-        </HapticButton>
-        <HapticButton
-          variant="ghost"
+        <button
+          type="button"
           onClick={handleSkip}
           disabled={isSubmitting}
+          className="text-sm text-stone-400 hover:text-stone-600 transition-colors py-2 disabled:opacity-50"
           data-testid="mood-skip"
-          className="flex-1"
         >
           Not right now
-        </HapticButton>
+        </button>
       </motion.div>
     </motion.div>
   );

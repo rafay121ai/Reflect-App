@@ -100,11 +100,14 @@ export function AuthProvider({ children }) {
             setLoading(false);
           }
         } else {
-          let { data: { session: s } } = await supabase.auth.getSession();
-          if (!s && !cancelled) {
-            await new Promise((r) => setTimeout(r, 200));
-            const retry = await supabase.auth.getSession();
-            s = retry.data?.session ?? null;
+          // Restore session from storage (e.g. after user reopens tab on mobile).
+          // Retry a few times so we don't give up if storage isn't ready on first read.
+          let s = (await supabase.auth.getSession()).data?.session ?? null;
+          const delays = [200, 600];
+          for (const ms of delays) {
+            if (s || cancelled) break;
+            await new Promise((r) => setTimeout(r, ms));
+            s = (await supabase.auth.getSession()).data?.session ?? null;
           }
           if (!cancelled) {
             setSession(s);

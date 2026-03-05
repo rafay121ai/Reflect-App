@@ -61,6 +61,11 @@ const JourneyCards = ({ sections, onComplete }) => {
     return () => clearTimeout(timer);
   }, []);
 
+  // Scroll to top when changing cards so the new card is in view
+  useEffect(() => {
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }, [currentCard]);
+
   // Haptic-like visual pulse on card change
   const triggerPulse = () => {
     setTapPulse(true);

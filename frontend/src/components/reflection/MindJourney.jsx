@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useSwipeable } from "react-swipeable";
 import { Compass, Lightbulb, Fingerprint, ChevronLeft, ChevronRight } from "lucide-react";
@@ -31,6 +31,11 @@ const MindJourney = ({ sections, onContinue, onBack }) => {
   const goToCard = (index) => {
     setCurrentCard(index);
   };
+
+  // Scroll to top when changing cards so the new card is in view
+  useEffect(() => {
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }, [currentCard]);
 
   const nextCard = () => {
     if (currentCard < sections.length - 1) {
