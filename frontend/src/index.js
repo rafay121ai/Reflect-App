@@ -3,6 +3,7 @@ import ReactDOM from "react-dom/client";
 import { BrowserRouter, Routes, Route } from "react-router-dom";
 import "./index.css";
 import App from "./App";
+import ErrorBoundary from "./ErrorBoundary";
 import AppErrorBoundary from "./components/AppErrorBoundary";
 import { AuthProvider } from "./contexts/AuthContext";
 import { RevenueCatProvider } from "./contexts/RevenueCatContext";
@@ -27,7 +28,7 @@ root.render(
         <AuthProvider>
           <RevenueCatProvider>
             <Routes>
-              <Route path="/" element={<App />} />
+              <Route path="/" element={<ErrorBoundary><App /></ErrorBoundary>} />
               <Route path="/auth/callback" element={<AuthCallback />} />
               <Route path="/login" element={<LoginPage />} />
               <Route path="/privacy" element={<PrivacyPolicy />} />

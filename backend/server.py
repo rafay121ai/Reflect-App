@@ -656,8 +656,8 @@ def mirror_personalized(request: Request, body: MirrorRequest, user_id: str = De
 @app.post("/api/mirror/report")
 @limiter.limit("20/hour")
 def mirror_report(
-    body: MirrorReportRequest,
     request: Request,
+    body: MirrorReportRequest,
     user_id: str = Depends(require_user_id),
 ):
     """
@@ -711,8 +711,8 @@ def mirror_report(
 @app.post("/api/mirror/report/guest")
 @limiter.limit("5/minute")
 def mirror_report_guest(
-    body: MirrorReportRequest,
     request: Request,
+    body: MirrorReportRequest,
 ):
     """
     Generate the 4-slide mirror report for guest users.
@@ -910,7 +910,8 @@ def mood_suggest_guest(request: Request, body: MoodSuggestRequest):
 
 
 @app.post("/api/mood")
-def mood(body: MoodRequest, user_id: str = Depends(require_user_id)):
+@limiter.limit("30/hour")
+def mood(request: Request, body: MoodRequest, user_id: str = Depends(require_user_id)):
     """Store a mood check-in: word/phrase, optional description, linked to reflection. No scores, no labels."""
     if not (body.word_or_phrase or "").strip():
         raise HTTPException(status_code=400, detail="word_or_phrase is required")
@@ -934,7 +935,8 @@ def mood(body: MoodRequest, user_id: str = Depends(require_user_id)):
 # ----- Saved reflections (history + open later) -----
 
 @app.post("/api/history")
-def history_save(body: SaveHistoryRequest, background_tasks: BackgroundTasks, user_id: str = Depends(require_user_id)):
+@limiter.limit("30/hour")
+def history_save(request: Request, body: SaveHistoryRequest, background_tasks: BackgroundTasks, user_id: str = Depends(require_user_id)):
     """Save a completed reflection to history. status='normal' by default."""
     if not (body.raw_text or "").strip():
         raise HTTPException(status_code=400, detail="raw_text is required")

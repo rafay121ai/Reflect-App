@@ -39,7 +39,7 @@ export default function PaywallLimitModal({ onUpgrade, onDismiss }) {
       const variantId = variants.variantMonthly || variants.variantYearly;
       openCheckout(
         { variantId, userId: user.id, userEmail: user.email || "" },
-        (err) => err && (window.alert?.(err) || console.warn(err))
+        (err) => err && window.alert?.(err)
       );
       onUpgrade?.();
       return;
@@ -76,7 +76,7 @@ export default function PaywallLimitModal({ onUpgrade, onDismiss }) {
                   onClick={() => {
                     openCheckout(
                       { variantId: variants.variantMonthly, userId: user?.id, userEmail: user?.email || "" },
-                      (e) => e && (window.alert?.(e) || console.warn(e))
+                      (e) => e && window.alert?.(e)
                     );
                     onUpgrade?.();
                   }}
@@ -89,7 +89,7 @@ export default function PaywallLimitModal({ onUpgrade, onDismiss }) {
                   onClick={() => {
                     openCheckout(
                       { variantId: variants.variantYearly, userId: user?.id, userEmail: user?.email || "" },
-                      (e) => e && (window.alert?.(e) || console.warn(e))
+                      (e) => e && window.alert?.(e)
                     );
                     onUpgrade?.();
                   }}

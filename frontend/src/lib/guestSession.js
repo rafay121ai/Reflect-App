@@ -125,10 +125,10 @@ export async function saveGuestReflectionToDb(apiBaseUrl, reflectionData) {
       }),
     });
     if (!res.ok) {
-      console.warn("Guest DB save failed:", res.status);
+      // Non-fatal; fallback to localStorage
     }
   } catch (e) {
-    console.warn("Guest DB save failed, using localStorage only", e);
+    // Non-fatal; using localStorage only
   }
 }
 

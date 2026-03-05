@@ -39,6 +39,7 @@ function MirrorStepBlock({
   questionResponses,
   reflectionId,
   accessToken,
+  mirrorReportEnabled,
   onMirrorSlidesComplete,
   onComeBackLater,
   onSetReminder,
@@ -53,7 +54,7 @@ function MirrorStepBlock({
     answers: (questionResponses || []).map((r) => r?.response ?? ""),
     reflectionId,
     accessToken,
-    enabled: showMirrorReadNow,
+    enabled: mirrorReportEnabled,
   });
 
   const handleSlidesComplete = () => {
@@ -173,6 +174,7 @@ const ReflectionFlow = ({
   const [userChoseRevisitType, setUserChoseRevisitType] = useState(null);
   const [lastMoodWord, setLastMoodWord] = useState(null);
   const [reflectionCount, setReflectionCount] = useState(0);
+  const [mirrorReportEnabled, setMirrorReportEnabled] = useState(false);
   const prevThoughtRef = useRef(originalThought);
   useEffect(() => {
     if (prevThoughtRef.current !== originalThought) {
@@ -206,6 +208,8 @@ const ReflectionFlow = ({
 
   const handleQuestionsComplete = (responses) => {
     setQuestionResponses(responses || []);
+    setMirrorReportEnabled(true);
+    console.log('[mirror timing] fetch started at:', Date.now());
     setCurrentStep(STEPS.MIRROR);
   };
 
@@ -353,6 +357,7 @@ const ReflectionFlow = ({
               questionResponses={questionResponses}
               reflectionId={reflectionId}
               accessToken={accessToken}
+              mirrorReportEnabled={mirrorReportEnabled}
               onMirrorSlidesComplete={handleMirrorSlidesComplete}
               onComeBackLater={handleComeBackLaterThenMood}
               onSetReminder={handleSetReminderThenMood}

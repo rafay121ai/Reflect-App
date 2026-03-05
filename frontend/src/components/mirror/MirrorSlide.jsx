@@ -52,7 +52,7 @@ export default function MirrorSlide({
       link.href = canvas.toDataURL("image/png", 1.0);
       link.click();
     } catch (err) {
-      console.warn("Save failed:", err);
+      console.error("Save failed:", err);
     }
   };
 

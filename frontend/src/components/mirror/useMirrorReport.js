@@ -40,8 +40,6 @@ export function useMirrorReport({
       ? `${base}/api/mirror/report/guest`
       : `${base}/api/mirror/report`;
 
-    console.log("[useMirrorReport] fetching:", url, "isGuest:", isGuest);
-
     const headers = { "Content-Type": "application/json" };
     if (!isGuest) {
       headers["Authorization"] = `Bearer ${accessToken}`;
@@ -62,11 +60,9 @@ export function useMirrorReport({
         return res.json();
       })
       .then((data) => {
-        console.log("[useMirrorReport] response:", data);
         if (!cancelled) setReport(data);
       })
       .catch((err) => {
-        console.warn("[useMirrorReport] failed:", err);
         if (!cancelled) {
           setError(err);
           hasFetchedRef.current = false;

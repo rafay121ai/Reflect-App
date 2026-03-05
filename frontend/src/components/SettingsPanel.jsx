@@ -492,7 +492,7 @@ const SettingsPanel = ({ apiBase, onClose, onOpenSignIn }) => {
                         userId: user?.id,
                         userEmail: user?.email || "",
                       },
-                      (err) => err && (window.alert?.(err) || console.warn(err))
+                      (err) => err && window.alert?.(err)
                     )
                   }
                   className="w-full py-2.5 px-4 text-sm font-medium rounded-xl bg-[#FFB4A9]/30 text-[#4A5568] hover:bg-[#FFB4A9]/40 border border-[#FFB4A9]/40 transition-colors"

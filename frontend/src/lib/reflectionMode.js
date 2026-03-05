@@ -1,11 +1,7 @@
 /**
  * Reflection Mode persistence and utilities.
- * 
- * Currently uses localStorage for persistence.
- * 
- * TODO: When Supabase Auth is added, replace localStorage calls with:
- *   - Read: fetch from user_settings table
- *   - Write: PATCH /api/user/settings { reflection_mode: value }
+ *
+ * Mode is stored in localStorage and sent with each reflect request (backend applies it).
  */
 
 const REFLECTION_MODE_KEY = "reflect_mode";
@@ -52,12 +48,6 @@ export function getReflectionMode() {
  * Set the reflection mode in storage.
  * @param {string} mode - Mode ID ("gentle" | "direct" | "quiet")
  * @returns {boolean} Success
- * 
- * TODO: When auth is added, also call:
- *   await fetch(`${API}/user/settings`, {
- *     method: 'PATCH',
- *     body: JSON.stringify({ reflection_mode: mode })
- *   });
  */
 export function setReflectionMode(mode) {
   if (!REFLECTION_MODES[mode]) return false;
