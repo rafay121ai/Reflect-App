@@ -910,11 +910,23 @@ def get_user_id_by_email(email: str) -> str | None:
     client = _get_client()
     if not client:
         return None
+    email = str(email).strip()
     try:
+        # Exact match first
         response = (
             client.table("profiles")
             .select("user_id")
-            .eq("email", str(email).strip())
+            .eq("email", email)
+            .limit(1)
+            .execute()
+        )
+        if response.data and len(response.data) > 0:
+            return (response.data[0].get("user_id") or "").strip() or None
+        # Case-insensitive fallback (e.g. Checkout: Test@Email.com vs profile: test@email.com)
+        response = (
+            client.table("profiles")
+            .select("user_id")
+            .ilike("email", email)
             .limit(1)
             .execute()
         )

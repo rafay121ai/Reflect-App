@@ -525,6 +525,7 @@ async def webhook_lemon_squeezy(
 ):
     import json
     from supabase_client import update_user_plan, get_user_id_by_email
+    from lemon_squeezy_client import parse_subscription_event, parse_order_created
 
     payload = await request.body()
 
@@ -539,34 +540,44 @@ async def webhook_lemon_squeezy(
 
     event = parse_subscription_event(body)
     if not event:
+        event = parse_order_created(body)
+    if not event:
         return {"ok": True}
 
     user_id = (event.get("user_id") or "").strip()
     if not user_id and event.get("user_email"):
         user_id = get_user_id_by_email(event["user_email"])
     if not user_id:
+        logger.warning(
+            "Lemon Squeezy webhook: no user found for email (check profiles.email matches checkout email). email_prefix=%s",
+            (event.get("user_email") or "")[:3] + "..." if event.get("user_email") else "n/a",
+        )
         return {"ok": True}
 
     # 2. Deduplicate — reject replayed events
     event_id = (body.get("meta") or {}).get("event_id", "") or ""
     event_name = event.get("event_name", "")
-
-    if is_duplicate_event(event_id):
+    if event_id and is_duplicate_event(event_id):
         return {"ok": True, "skipped": "duplicate"}
 
-    # 3. Process subscription change
+    # 3. Process subscription/order change
     user_id = user_id.strip()
     status = event.get("status") or ""
     plan_type = event.get("plan_type") or "monthly"
 
     try:
-        if status == "active":
+        if event_name == "order_created":
+            if status == "paid":
+                update_user_plan(user_id, plan_type)
+                logger.info("Lemon Squeezy order_created: updated user %s to plan %s", user_id[:8] + "...", plan_type)
+        elif status == "active":
             update_user_plan(user_id, plan_type)
+            logger.info("Lemon Squeezy subscription active: updated user %s to plan %s", user_id[:8] + "...", plan_type)
         elif status in ("cancelled", "expired"):
             update_user_plan(user_id, "trial")
     finally:
-        # 4. Mark as processed (best-effort)
-        record_event(event_id, event_name)
+        if event_id:
+            record_event(event_id, event_name)
 
     return {"ok": True}
 

@@ -45,6 +45,51 @@ def verify_webhook_signature(payload: bytes, signature: str) -> bool:
         return False
 
 
+def parse_order_created(body: dict[str, Any]) -> dict[str, Any] | None:
+    """
+    Parse Lemon Squeezy order_created webhook (sent when a purchase is completed).
+    Returns same shape as parse_subscription_event: event_name, user_id, user_email, variant_id, plan_type, status.
+    """
+    if not isinstance(body, dict):
+        return None
+    meta = body.get("meta") or {}
+    event_name = (meta.get("event_name") or "").strip()
+    if event_name != "order_created":
+        return None
+    custom_data = meta.get("custom_data") or {}
+    user_id = (custom_data.get("user_id") or "").strip() or None
+    data = body.get("data") or {}
+    attrs = data.get("attributes") or {}
+    user_email = (attrs.get("user_email") or "").strip() or None
+    # variant_id can be in first_order_item or in included order items
+    variant_id = None
+    first_item = attrs.get("first_order_item")
+    if isinstance(first_item, dict):
+        variant_id = str(first_item.get("variant_id") or "").strip() or None
+    if not variant_id:
+        variant_id = str(attrs.get("variant_id") or "").strip() or None
+    if not variant_id and isinstance(body.get("included"), list):
+        for inc in body.get("included", []):
+            if (inc.get("type") or "").strip() == "order-items":
+                a = inc.get("attributes") or {}
+                variant_id = str(a.get("variant_id") or "").strip() or None
+                if variant_id:
+                    break
+    plan_type = VARIANT_TO_PLAN.get(variant_id or "", "monthly")
+    status = (attrs.get("status") or "").strip().lower() or ""
+    if not user_id and not user_email:
+        logger.warning("Lemon Squeezy order_created webhook missing user_id and user_email")
+        return None
+    return {
+        "event_name": event_name,
+        "user_id": user_id,
+        "user_email": user_email,
+        "variant_id": variant_id,
+        "plan_type": plan_type,
+        "status": status,
+    }
+
+
 def parse_subscription_event(body: dict[str, Any]) -> dict[str, Any] | None:
     """
     Parse a Lemon Squeezy subscription webhook body.
