@@ -27,17 +27,13 @@ const STEP_SUBTEXT = [
   "Take a breath before you go.",
 ];
 
-/**
- * Mirror step block: RevisitChoiceScreen + MirrorEntry + MirrorSlides.
- * Uses useMirrorReport internally. When this component is keyed by reflectionId/reflectionCount,
- * it fully unmounts and remounts for each new reflection, resetting hasFetchedRef so the next fetch runs.
- */
 function MirrorStepBlock({
   apiBase,
   originalThought,
   questions,
   questionResponses,
   reflectionId,
+  reflectionCount,
   accessToken,
   mirrorReportEnabled,
   onMirrorSlidesComplete,
@@ -99,6 +95,7 @@ function MirrorStepBlock({
         </motion.div>
       ) : (
         <div
+          key={reflectionId || reflectionCount}
           style={{
             position: "fixed",
             top: 0,
@@ -360,6 +357,7 @@ const ReflectionFlow = ({
               questions={questions}
               questionResponses={questionResponses}
               reflectionId={reflectionId}
+              reflectionCount={reflectionCount}
               accessToken={accessToken}
               mirrorReportEnabled={mirrorReportEnabled}
               onMirrorSlidesComplete={handleMirrorSlidesComplete}

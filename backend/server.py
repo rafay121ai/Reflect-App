@@ -107,6 +107,7 @@ app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 # Personalization refresh: interval in hours (0 = disabled). Default 24.
 PERSONALIZATION_REFRESH_INTERVAL_HOURS = float(os.getenv("PERSONALIZATION_REFRESH_INTERVAL_HOURS", "24").strip() or "0")
 PERSONALIZATION_REFRESH_INITIAL_DELAY_SEC = 60
+CLEANUP_SECRET = os.getenv("CLEANUP_SECRET", "").strip()
 
 
 def _run_personalization_refresh_all():
@@ -1244,6 +1245,17 @@ def cleanup_guest_reflections(
         return {"deleted": deleted}
     except Exception as e:
         raise _server_error(e, "cleanup-guest-reflections")
+
+
+@app.post("/api/internal/cleanup-guests")
+async def cleanup_guests(request: Request):
+    # Verify a secret token to prevent abuse
+    auth = request.headers.get("Authorization", "")
+    if auth != f"Bearer {CLEANUP_SECRET}":
+        raise HTTPException(status_code=401)
+
+    deleted = delete_orphaned_guest_reflections_older_than(days=3)
+    return {"status": "ok", "deleted": deleted}
 
 
 # ----- Beta feedback -----

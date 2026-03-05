@@ -5,20 +5,20 @@ import { Feather, Heart, Wind } from "lucide-react";
 const slides = [
   {
     icon: Feather,
-    title: "We're glad you're here.",
-    text: "A space to sit with one thought. No fixing, no judging.",
+    title: "Write one thought.",
+    text: "We'll show you what's underneath it.",
     gradient: "linear-gradient(135deg, #FFB4A9 0%, #FFDDD2 100%)"
   },
   {
     icon: Heart,
-    title: "No advice. No fixing.",
-    text: "We just reflect back what we hear—like a quiet friend.",
+    title: "Not what you wrote. How you wrote it.",
+    text: "REFLECT reads between the lines and shows you the pattern underneath — most people are surprised by what it finds.",
     gradient: "linear-gradient(135deg, #E0D4FC 0%, #F0EBFF 100%)"
   },
   {
     icon: Wind,
-    title: "Your words stay yours.",
-    text: "We're here to listen and help you see it gently.",
+    title: "The more you reflect, the clearer it gets.",
+    text: "Over time, REFLECT builds a picture of who you actually are — not just what you're feeling today.",
     gradient: "linear-gradient(135deg, #C1D0C6 0%, #E0EBE4 100%)"
   }
 ];
