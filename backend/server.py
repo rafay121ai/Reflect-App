@@ -681,6 +681,18 @@ def mirror_report(
     except Exception:
         pattern_history = []
 
+    # Log whether pattern/personalization is being used (for mirror report)
+    themes = user_context.get("recurring_themes") or []
+    n_patterns = len(pattern_history or [])
+    if themes or n_patterns:
+        logging.info(
+            "Mirror report: using pattern reflection (recurring_themes=%d, pattern_history_entries=%d)",
+            len(themes),
+            n_patterns,
+        )
+    else:
+        logging.info("Mirror report: no personalization context (new user or no history yet)")
+
     # Ownership check if reflection_id provided
     if body.reflection_id:
         ref_row = get_reflection_by_id(body.reflection_id.strip())
@@ -764,6 +776,17 @@ def closing(request: Request, body: ClosingRequest, user_id: str = Depends(requi
         raise HTTPException(status_code=400, detail="mirror_response is required")
     user_context = get_personalization_context(user_id) or {}
     pattern_history_data = get_pattern_history_for_user(user_id, 5) or []
+    # Log whether pattern/personalization is being used (for closing)
+    themes = user_context.get("recurring_themes") or []
+    n_patterns = len(pattern_history_data)
+    if themes or n_patterns:
+        logging.info(
+            "Closing: using pattern reflection (recurring_themes=%d, pattern_history_entries=%d)",
+            len(themes),
+            n_patterns,
+        )
+    else:
+        logging.info("Closing: no personalization context (new user or no history yet)")
     mirror_report_context: str | None = None
     if body.reflection_id:
         ref_row = get_reflection_by_id(body.reflection_id.strip())
