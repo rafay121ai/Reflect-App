@@ -708,12 +708,33 @@ def mirror_report(
             pattern_history=pattern_history,
         )
 
-        # Save report to reflection if reflection_id provided
-        if body.reflection_id and report:
+        # Persist questions, answers, and mirror content to the reflection row (so they appear in the table)
+        if body.reflection_id and (body.reflection_id or "").strip():
+            rid = body.reflection_id.strip()
+            # Build a single string for personalized_mirror from the report (existing column)
+            mirror_parts = []
+            if isinstance(report, dict):
+                arch = report.get("archetype") or {}
+                if isinstance(arch, dict) and arch.get("name"):
+                    mirror_parts.append(f"Archetype: {arch.get('name')}.")
+                if report.get("shaped_by"):
+                    mirror_parts.append(f"Shaped by: {report['shaped_by']}")
+                if report.get("costing_you"):
+                    mirror_parts.append(f"Costing you: {report['costing_you']}")
+                if report.get("question"):
+                    mirror_parts.append(f"Question: {report['question']}")
+            personalized_mirror_str = " ".join(mirror_parts) if mirror_parts else ""
+            answers_list = body.answers if isinstance(body.answers, list) else list((body.answers or {}).values()) if isinstance(body.answers, dict) else []
             try:
-                save_mirror_report(body.reflection_id, report)
+                update_reflection(rid, body.questions or [], answers_list, personalized_mirror_str or "")
             except Exception as e:
-                logger.warning("Failed to save mirror report: %s", type(e).__name__)
+                logging.warning("Failed to save questions/answers/mirror to reflection: %s", type(e).__name__)
+            # Optionally save full report JSON if mirror_report column exists (see reflections_mirror_report_migration.sql)
+            if report:
+                try:
+                    save_mirror_report(rid, report)
+                except Exception as e:
+                    logging.warning("Failed to save mirror report: %s", type(e).__name__)
 
         return report
     except Exception as e:

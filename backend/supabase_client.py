@@ -624,14 +624,13 @@ def update_reflection_closing(reflection_id: str, closing_text: str) -> bool:
 
 
 def save_mirror_report(reflection_id: str, report: dict) -> None:
-    """Save mirror report to reflection row for later retrieval."""
+    """Save full mirror report JSON to reflection row. Requires mirror_report (JSONB) column. No updated_at to avoid 400 if column missing."""
     client = _get_client()
     if not client:
         return
     try:
         client.table("reflections").update({
             "mirror_report": report,
-            "updated_at": datetime.utcnow().isoformat(),
         }).eq("id", reflection_id).execute()
     except Exception as e:
         logger.warning("save_mirror_report failed: %s", type(e).__name__)
