@@ -809,18 +809,40 @@ def get_mirror_report(
     
     # Build archetype list for selection
     archetype_list = "\n".join([
-        f"{i+1}. {a['name']} — {a['description'].split('.')[0]}."
+        f"{i+1}. {a['name']}\n"
+        f"   {a['description']}\n"
+        f"   Traits: {', '.join(a['traits'])}"
         for i, a in enumerate(ARCHETYPES)
     ])
     
     # Stage 1: Select archetype
-    archetype_system = """You match people to archetypes based on how they think and write.
-    
-You are reading between the lines — not just what they said, 
-but how they said it. Word choice, what they included, 
-what they left out, how they framed things.
+    archetype_system = """You match people to archetypes 
+based on the pattern underneath their words.
 
-Output ONLY a valid JSON object. No markdown. No explanation.
+Read HOW they wrote this — not just what happened.
+- What does their word choice reveal?
+- What are they NOT saying but clearly feeling?
+- What belief about themselves or the world is 
+  sitting under this thought?
+- How do they frame their situation — as something 
+  happening TO them or something they are CHOOSING?
+- What do their answers reveal about what they 
+  actually need vs what they said they felt?
+
+CRITICAL: Ignore surface keywords entirely.
+A person writing about planning is NOT automatically 
+The Architect.
+A person writing about a decision is NOT automatically 
+The Threshold Person.
+A person writing about belonging and not finding 
+likeminded people is NOT The Architect — they are 
+likely The Depth Requirer or The Careful Opener.
+
+Read the emotional subtext. Read what they revealed 
+in their answers, not just the original thought.
+The answers are often more honest than the thought.
+
+Output ONLY valid JSON. No markdown. No explanation.
 {"archetype_number": 3}"""
 
     archetype_prompt = f"""The person wrote this thought:
@@ -912,13 +934,43 @@ e.g. "The upside is you never get blindsided.
 The cost is you're always bracing."
 
 3. "question" — 1 question only.
-Not advice. Not a prompt to fix anything.
-The question that opens something they haven't asked themselves.
-The kind that stays with them.
+Not advice. Not a reframe. Not "instead of X think 
+about Y." Not "what would it mean if..."
+The question that surfaces something they have not 
+looked at directly yet.
+It should feel like a door opening, not a hand pushing.
 Plain English. Under 20 words.
-Should feel slightly uncomfortable to sit with.
-e.g. "What would you do differently if you trusted that 
-people could handle the real version of you?"
+Slightly uncomfortable to sit with.
+
+Never starts with:
+- "Instead"
+- "Rather than" 
+- "Have you considered"
+- "What if you"
+- "What would it mean if"
+- "Could it be that"
+
+Good examples:
+"When did you first know — and how long did you 
+wait before admitting it?"
+"What would you have to believe about yourself 
+to trust this decision without needing it validated?"
+"Who are you most afraid of disappointing with 
+this choice — and why does their opinion carry 
+that weight?"
+"What part of the old path were you relieved 
+to leave — that you haven't said out loud yet?"
+
+Bad examples:
+"Instead of focusing on lost time, what if you 
+thought about what you're gaining?"
+"What would it mean if starting over was progress?"
+"Have you considered that 2 years might be worth it?"
+"What does this decision say about your values?"
+
+The question should make them go quiet, not nod.
+It should be about THEM — not about reframing 
+the situation.
 
 Output format:
 {{

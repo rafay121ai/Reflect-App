@@ -73,85 +73,77 @@ function MirrorStepBlock({
   };
 
   return (
-    <div
-      style={{
-        position: "fixed",
-        top: 0,
-        left: 0,
-        width: "100vw",
-        height: "100vh",
-        zIndex: 100,
-        background: "#0a0a12",
-      }}
-    >
-      <AnimatePresence mode="wait">
-        {!userChoseReadNow ? (
-          <motion.div
-            key="revisit-choice"
-            initial={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            transition={{ duration: 0.5, ease: "easeInOut" }}
-            style={{
-              width: "100%",
-              height: "100%",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-            }}
-          >
-            <RevisitChoiceScreen
-              reflectionId={reflectionId}
-              onReadNow={() => setUserChoseReadNow(true)}
-              onComeBackLater={onComeBackLater}
-              onSetReminder={onSetReminder}
-              isLoadingReport={reportLoading}
-            />
-          </motion.div>
-        ) : (
-          <motion.div
-            key="mirror-world"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            transition={{ duration: 0.5, ease: "easeInOut" }}
-            style={{ width: "100%", height: "100%" }}
-          >
-            <AnimatePresence mode="wait">
-              {!mirrorOpened ? (
-                <motion.div
-                  key="entry"
-                  initial={{ opacity: 0 }}
-                  animate={{ opacity: 1 }}
-                  exit={{ opacity: 0, scale: 1.05 }}
-                  transition={{ duration: 0.5 }}
-                  style={{ width: "100%", height: "100%" }}
-                >
-                  <MirrorEntry
-                    archetypeName={mirrorReport?.archetype?.name}
-                    isLoading={reportLoading || !mirrorReport}
-                    onOpen={() => {
-                      if (mirrorReport) setMirrorOpened(true);
-                    }}
-                  />
-                </motion.div>
-              ) : (
-                <motion.div
-                  key="slides"
-                  initial={{ opacity: 0 }}
-                  animate={{ opacity: 1 }}
-                  transition={{ duration: 0.4 }}
-                  style={{ width: "100%", height: "100%" }}
-                >
-                  <MirrorSlides
-                    report={mirrorReport}
-                    onComplete={handleSlidesComplete}
-                  />
-                </motion.div>
-              )}
-            </AnimatePresence>
-          </motion.div>
-        )}
-      </AnimatePresence>
-    </div>
+    <>
+      {!userChoseReadNow ? (
+        <motion.div
+          key="revisit-choice"
+          initial={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          transition={{ duration: 0.5, ease: "easeInOut" }}
+          style={{
+            width: "100%",
+            height: "100%",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+          }}
+        >
+          <RevisitChoiceScreen
+            reflectionId={reflectionId}
+            onReadNow={() => setUserChoseReadNow(true)}
+            onComeBackLater={onComeBackLater}
+            onSetReminder={onSetReminder}
+            isLoadingReport={reportLoading}
+          />
+        </motion.div>
+      ) : (
+        <div
+          style={{
+            position: "fixed",
+            top: 0,
+            left: 0,
+            width: "100vw",
+            height: "100vh",
+            zIndex: 100,
+            background: "#0a0a12",
+          }}
+        >
+          <AnimatePresence mode="wait">
+            {!mirrorOpened ? (
+              <motion.div
+                key="entry"
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0, scale: 1.05 }}
+                transition={{ duration: 0.5 }}
+                style={{ width: "100%", height: "100%" }}
+              >
+                <MirrorEntry
+                  archetypeName={mirrorReport?.archetype?.name}
+                  isLoading={reportLoading || !mirrorReport}
+                  onOpen={() => {
+                    if (mirrorReport) setMirrorOpened(true);
+                  }}
+                />
+              </motion.div>
+            ) : (
+              <motion.div
+                key="slides"
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                transition={{ duration: 0.4 }}
+                style={{ width: "100%", height: "100%" }}
+              >
+                <MirrorSlides
+                  report={mirrorReport}
+                  onComplete={handleSlidesComplete}
+                />
+              </motion.div>
+            )}
+          </AnimatePresence>
+        </div>
+      )}
+    </>
   );
 }
 
