@@ -222,30 +222,6 @@ export default function MirrorSlides({ report, onComplete }) {
         ))}
       </div>
 
-      <AnimatePresence>
-        {isPaused && (
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            style={{
-              position: "absolute",
-              top: "50%",
-              left: "50%",
-              transform: "translate(-50%, -50%)",
-              zIndex: 20,
-              color: "rgba(255,255,255,0.3)",
-              fontSize: 11,
-              letterSpacing: "0.2em",
-              textTransform: "uppercase",
-              pointerEvents: "none",
-            }}
-          >
-            ⏸
-          </motion.div>
-        )}
-      </AnimatePresence>
-
       <AnimatePresence custom={direction} mode="sync">
         <motion.div
           key={currentSlide}
