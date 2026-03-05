@@ -209,7 +209,6 @@ const ReflectionFlow = ({
   const handleQuestionsComplete = (responses) => {
     setQuestionResponses(responses || []);
     setMirrorReportEnabled(true);
-    console.log('[mirror timing] fetch started at:', Date.now());
     setCurrentStep(STEPS.MIRROR);
   };
 
@@ -272,6 +271,11 @@ const ReflectionFlow = ({
     await onSetReminder(reflectionIdArg, days);
     setCurrentStep(STEPS.MOOD);
   };
+
+  // Scroll to top when moving to a new step (Journey → Questions → Mirror → Mood → Closing)
+  useEffect(() => {
+    window.scrollTo({ top: 0, left: 0, behavior: "smooth" });
+  }, [currentStep]);
 
   return (
     <motion.div

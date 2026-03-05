@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 
 /**
@@ -6,10 +6,6 @@ import { motion, AnimatePresence } from "framer-motion";
  * On tap — glass clears with ripple, then slides begin.
  */
 export default function MirrorEntry({ archetypeName, isLoading, onOpen }) {
-  useEffect(() => {
-    console.log('[mirror timing] mirror entry mounted at:', Date.now());
-  }, []);
-
   const [tapped, setTapped] = useState(false);
   const [ripple, setRipple] = useState(null);
 

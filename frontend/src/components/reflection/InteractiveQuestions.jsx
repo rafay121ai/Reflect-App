@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { MessageCircle, ChevronRight, ChevronLeft } from "lucide-react";
 import HapticButton from "../ui/HapticButton";
@@ -35,6 +35,11 @@ const InteractiveQuestions = ({ questions, onComplete, onBack }) => {
 
   const isLastQuestion = currentQuestion === questions.length - 1;
   
+  // Scroll to top when moving to next/prev question so each question is in view
+  useEffect(() => {
+    window.scrollTo({ top: 0, left: 0, behavior: "smooth" });
+  }, [currentQuestion]);
+
   const getButtonText = () => {
     if (isLastQuestion) return "See Your Mirror";
     if (currentQuestion === 1) return "One More";

@@ -4,6 +4,7 @@ import { BrowserRouter, Routes, Route } from "react-router-dom";
 import "./index.css";
 import App from "./App";
 import ErrorBoundary from "./ErrorBoundary";
+import ScrollRestoration from "./ScrollRestoration";
 import AppErrorBoundary from "./components/AppErrorBoundary";
 import { AuthProvider } from "./contexts/AuthContext";
 import { RevenueCatProvider } from "./contexts/RevenueCatContext";
@@ -25,6 +26,7 @@ root.render(
   <React.StrictMode>
     <AppErrorBoundary>
       <BrowserRouter>
+        <ScrollRestoration />
         <AuthProvider>
           <RevenueCatProvider>
             <Routes>
