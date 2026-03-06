@@ -689,7 +689,7 @@ const SettingsPanel = ({ apiBase, onClose, onOpenSignIn, usage, onRefetchUsage }
 
           {/* Footer note */}
           <p className="text-[10px] text-[#94A3B8] text-center mt-6">
-            REFLECT v1.0 — Made with care
+            © 2026 Reflect
           </p>
         </div>
       </motion.div>

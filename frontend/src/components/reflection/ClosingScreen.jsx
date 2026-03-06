@@ -93,6 +93,7 @@ const NEXT_TIME_LINE =
 const ClosingScreen = ({
   closingText,
   isLoading,
+  isSlowClosing,
   onDone,
 }) => {
   // Fallback text if API fails
@@ -156,14 +157,24 @@ const ClosingScreen = ({
         }}
       >
         {isLoading ? (
-          <motion.div
-            animate={{ opacity: [0.4, 1, 0.4] }}
-            transition={{ duration: 2, repeat: Infinity }}
-            className="text-xl text-[#A0AEC0]"
-            style={{ fontFamily: "'Fraunces', serif" }}
-          >
-            One thing to carry…
-          </motion.div>
+          <>
+            <motion.div
+              animate={{ opacity: [0.4, 1, 0.4] }}
+              transition={{ duration: 2, repeat: Infinity }}
+              className="text-xl text-[#A0AEC0]"
+              style={{ fontFamily: "'Fraunces', serif" }}
+            >
+              One thing to carry…
+            </motion.div>
+            {isSlowClosing && (
+              <p
+                className="mt-4 text-center"
+                style={{ fontSize: 12, color: "#A0AEC0" }}
+              >
+                Still writing your closing…
+              </p>
+            )}
+          </>
         ) : (
           <div
             className="closing-container relative z-10 text-center max-w-lg mx-auto"
@@ -302,6 +313,18 @@ const ClosingScreen = ({
           </button>
         </motion.div>
       )}
+      <div style={{ textAlign: "center", padding: "12px 0" }}>
+        <a
+          href="tel:988"
+          style={{
+            fontSize: 11,
+            color: "#A0AEC0",
+            textDecoration: "none",
+          }}
+        >
+          In crisis? Text 988
+        </a>
+      </div>
       </div>
     </motion.div>
   );

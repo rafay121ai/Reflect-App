@@ -10,7 +10,7 @@
 
 import { Capacitor } from "@capacitor/core";
 
-const NOTIFICATION_TITLE = "You wanted to come back to this reflection.";
+const NOTIFICATION_TITLE = "Reflect";
 const NOTIFICATION_BODY_DEFAULT = "Tap to open.";
 const NOTIFICATION_TAG_PREFIX = "revisit-";
 

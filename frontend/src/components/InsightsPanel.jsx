@@ -383,7 +383,7 @@ const InsightsPanel = ({ apiBase, onClose }) => {
         setRegenerateError(true);
       }
     } catch (err) {
-      console.error("Regenerate failed:", err);
+      if (process.env.NODE_ENV !== "production") console.error("Regenerate failed:", err);
       setRegenerateError(true);
     } finally {
       setRegenerating(false);

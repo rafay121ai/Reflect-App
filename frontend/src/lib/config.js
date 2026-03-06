@@ -1,6 +1,7 @@
 /**
  * Backend URL: on Vercel (production or preview) always use Railway; otherwise use env or localhost.
- * Prioritizing Vercel detection ensures the deployed app always uses Railway even if built with localhost in .env.
+ * Set REACT_APP_BACKEND_URL in .env or Vercel for a different backend; changing RAILWAY_BACKEND_URL
+ * below requires a frontend redeploy unless you use env for production.
  */
 const RAILWAY_BACKEND_URL = "https://reflect-app-production.up.railway.app";
 

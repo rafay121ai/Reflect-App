@@ -1273,6 +1273,45 @@ Return JSON array only:
 # Public API for Pattern Analyzer
 # ============================================================================
 
+def generate_return_card(context: str) -> str | None:
+    """
+    Generate a return card connecting the user's pattern to a real-world anchor.
+    3-4 lines max.
+    """
+    system = """You write 3-4 lines. No more.
+
+You connect this person's internal pattern to something real in the world — a specific person, a named psychological concept, a historical moment, a study, a cultural phenomenon. The anchor must be real and specific. Never invented.
+
+Structure:
+Line 1-2: The real world anchor and what it observed or did.
+Line 3: The connection to this person's exact pattern.
+Line 4: One line that lands on who they are. Slightly uncomfortable. Not consoling.
+
+Rules:
+- The real world anchor must be named specifically — a person's name, a study's finding, a concept's name. Never vague ('some people', 'research shows', 'many find').
+- Never start with 'You'
+- Never summarise what they wrote
+- Never use the words: journey, process, growth, healing, reflect, pattern, cope, navigate
+- The last line must be about who they ARE, not what they should do
+- Plain language. Nothing needs decoding.
+- 3-4 lines total. Hard limit."""
+
+    prompt = f"""Based on this person's reflection data, write a return card.
+
+{context}
+
+Write 3-4 lines only. Connect their specific situation to a real, named anchor from the world — a person, a study, a concept, a moment in history. Make the connection feel inevitable, not forced. The last line should be about who they are."""
+
+    try:
+        result = _chat(prompt, system=system).strip()
+        if result and len(result) > 20:
+            return result
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).warning("Return card generation failed: %s", e)
+    return None
+
+
 def llm_chat(prompt: str, system: str | None = None) -> str:
     """
     Public chat function for use by pattern_analyzer.py and other modules.

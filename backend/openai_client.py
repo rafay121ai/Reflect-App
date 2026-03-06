@@ -22,11 +22,48 @@ from llm_shared import (
 
 logger = logging.getLogger(__name__)
 
+# ---------------------------------------------------------------------------
+# Crisis detection — checked BEFORE any LLM call in server.py endpoints
+# ---------------------------------------------------------------------------
+CRISIS_SIGNALS_HIGH_CONFIDENCE = [
+    "kill myself", "end my life", "want to die",
+    "don't want to be here", "suicide", "suicidal",
+    "no reason to live", "can't go on", "cannot go on",
+    "everyone would be better without me",
+    "not worth living", "want it to end", "end it all",
+    "done with life",
+]
+
+CRISIS_SIGNALS_CONTEXT_DEPENDENT = [
+    "self harm", "self-harm", "cutting myself",
+    "hurt myself", "disappear forever",
+]
+
+
+def contains_crisis_signal(text: str) -> bool:
+    if not text:
+        return False
+    lower = text.lower()
+
+    if any(signal in lower for signal in CRISIS_SIGNALS_HIGH_CONFIDENCE):
+        return True
+
+    first_person = ["i ", "i'm", "im ", "myself", "my "]
+    for signal in CRISIS_SIGNALS_CONTEXT_DEPENDENT:
+        if signal in lower:
+            idx = lower.find(signal)
+            surrounding = lower[max(0, idx - 30):idx + 30]
+            if any(fp in surrounding for fp in first_person):
+                return True
+
+    return False
+
+
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "").strip()
 OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini").strip() or "gpt-4o-mini"
 
 
-def _chat(prompt: str, system: str | None = None, max_retries: int = 2) -> str:
+def _chat(prompt: str, system: str | None = None, max_retries: int = 2, max_tokens: int = 800) -> str:
     """
     Send a prompt to OpenAI with exponential backoff retry.
     Retries on 429 (rate limit) and 503 (service unavailable).
@@ -52,6 +89,7 @@ def _chat(prompt: str, system: str | None = None, max_retries: int = 2) -> str:
                     json={
                         "model": OPENAI_MODEL,
                         "messages": messages,
+                        "max_tokens": max_tokens,
                     },
                 )
 
@@ -69,6 +107,14 @@ def _chat(prompt: str, system: str | None = None, max_retries: int = 2) -> str:
 
                 r.raise_for_status()
                 data = r.json()
+                usage = data.get("usage")
+                if usage:
+                    logger.info(
+                        "[tokens] prompt=%s completion=%s total=%s",
+                        usage.get("prompt_tokens"),
+                        usage.get("completion_tokens"),
+                        usage.get("total_tokens"),
+                    )
                 choice = (data.get("choices") or [None])[0]
                 if not choice:
                     return ""
@@ -528,7 +574,7 @@ MIXED — Genuinely two layers with equal weight. Use sparingly — most thought
 Output ONLY: PRACTICAL, EMOTIONAL, SOCIAL, or MIXED"""
 
     try:
-        result = _chat(prompt, system=system).strip().upper()
+        result = _chat(prompt, system=system, max_tokens=10).strip().upper()
         for conv_type in ["PRACTICAL", "EMOTIONAL", "SOCIAL", "MIXED"]:
             if conv_type in result:
                 return conv_type
@@ -586,40 +632,33 @@ Rules that don't change regardless of type:
 - The last question should make them pause"""
     
     try:
-        raw = _chat(base_prompt, system=system).strip()
-        # Parse questions from response (they might be numbered or bulleted)
+        raw = _chat(base_prompt, system=system, max_tokens=300).strip()
         questions = []
         lines = raw.split('\n')
         for line in lines:
             line = line.strip()
-            # Remove numbering/bullets
             line = re.sub(r'^[\d\-•*]\s*', '', line)
             line = re.sub(r'^Q\d+[:.]\s*', '', line, flags=re.IGNORECASE)
             if line and line.endswith('?'):
                 questions.append(line)
             elif line and len(line) > 10 and not line.startswith('IF') and not line.startswith('Rules'):
-                # Might be a question without ? or formatted differently
                 questions.append(line)
         
-        # Ensure we have at least some questions
         if not questions:
-            # Fallback questions
             if conversation_type == "PRACTICAL":
                 questions = ["What's the actual situation here?", "What have you already considered?", "What are the real constraints?"]
             elif conversation_type == "EMOTIONAL":
                 questions = ["What's the feeling underneath this?", "Is this more like X or more like Y?"]
             elif conversation_type == "SOCIAL":
                 questions = ["What does this say about who you are in this?", "What are you protecting here?"]
-            else:  # MIXED
+            else:
                 questions = ["What's really going on here?", "How does this feel?", "What does this say about you?"]
         
-        # Limit to mode's question count
         max_q = config["questions_count"]
         return questions[:max_q] if len(questions) > max_q else questions
         
     except Exception as e:
         logger.warning("Adaptive question generation failed: %s", e)
-        # Fallback to default questions
         return ["What do you notice right now?", "What feels most important?", "What do you need?"][:config["questions_count"]]
 
 
@@ -818,7 +857,7 @@ OUTPUT FORMAT: Start each section with exactly ## SectionName.
 ## What's Underneath This'''
 
 
-    raw = _chat(prompt, system=journey_system)
+    raw = _chat(prompt, system=journey_system, max_tokens=600)
     if not (raw and raw.strip()):
         logger.warning("get_reflection: LLM returned empty response; using fallback sections. Check OPENAI_API_KEY and model.")
     sections = _parse_sections(raw)
@@ -870,7 +909,20 @@ def get_personalized_mirror(thought: str, questions: list, answers: dict | list,
             answer_list.append(answers.get(q, answers.get(str(questions.index(q)), "")))
     else:
         answer_list = list(answers) if answers else []
-    
+
+    total_words = sum(len(a.split()) for a in answer_list
+                      if a and a.strip())
+    avg_words = total_words / max(
+        len([a for a in answer_list if a and a.strip()]), 1
+    )
+
+    if avg_words <= 2:
+        answer_depth = "SPARSE"
+    elif avg_words <= 8:
+        answer_depth = "MODERATE"
+    else:
+        answer_depth = "DESCRIPTIVE"
+
     # Build Q&A pairs for prompt
     qa_pairs = []
     for i, q in enumerate(questions):
@@ -910,6 +962,36 @@ They answered these questions:
 {chr(10).join(qa_pairs)}
 
 {personalization_block}
+
+Answer depth: {answer_depth}
+
+If SPARSE:
+- The original thought carries 80% of the meaning
+- Each word in the answers is a deliberate compression
+- Do not treat short answers as incomplete — treat them
+  as precise
+- Go deeper into the original thought to find what the
+  answers confirm
+- Never pad sparse answers into longer observations
+
+If MODERATE:
+- Weight thought and answers equally
+- Look for what they started to say and stopped
+- The gap between the question asked and the answer given
+  is often more revealing than the answer itself
+
+If DESCRIPTIVE:
+- Do not summarise what they said — they already know
+- Identify the FRAME they are operating from
+- Find the assumption underneath the assumption
+- Name the rule they are living by that they never
+  consciously chose
+- Find contradictions between thought and answers
+
+In all cases:
+- No exact phrases from their input
+- You are revealing, not reflecting
+- The person should feel seen, not summarised
 
 Write the mirror. 2-3 sentences maximum.
 
@@ -973,7 +1055,7 @@ What you're NOT writing:
 If you know their recurring themes, go one layer deeper than you would for a stranger.
 Reference the pattern without naming it explicitly. Make them feel genuinely known, not just heard."""
 
-    return _chat(prompt, system=system).strip() or "What you shared matters. Take a moment to be with it."
+    return _chat(prompt, system=system, max_tokens=500).strip() or "What you shared matters. Take a moment to be with it."
 
 
 def get_mirror_report(
@@ -1003,11 +1085,23 @@ def get_mirror_report(
     )
     
     # Build Q&A text
-    qa_text = ""
-    for i, q in enumerate(questions):
-        a = answers[i] if i < len(answers) else ""
-        qa_text += f"Q: {q}\nA: {a}\n\n"
-    
+    qa_text_lines = []
+    for i, (q, a) in enumerate(zip(questions, answers)):
+        qa_text_lines.append(f"Q{i+1}: {q}")
+        qa_text_lines.append(f"A{i+1}: {a.strip() if a.strip() else '[no answer given]'}")
+        qa_text_lines.append("")
+    qa_text = "\n".join(qa_text_lines)
+
+    total_words = sum(len(a.split()) for a in answers if a.strip())
+    avg_words = total_words / max(len([a for a in answers if a.strip()]), 1)
+
+    if avg_words <= 2:
+        answer_signal = "SPARSE"
+    elif avg_words <= 8:
+        answer_signal = "MODERATE"
+    else:
+        answer_signal = "DESCRIPTIVE"
+
     # Build archetype list for selection
     archetype_list = "\n".join([
         f"{i+1}. {a['name']}\n"
@@ -1064,7 +1158,7 @@ based on HOW they wrote and what they revealed in their answers.
 Output ONLY: {{"archetype_number": N}}"""
 
     try:
-        raw = _chat(archetype_prompt, system=archetype_system).strip()
+        raw = _chat(archetype_prompt, system=archetype_system, max_tokens=20).strip()
         if raw.startswith("```"):
             raw = raw.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
         data = json.loads(raw)
@@ -1111,6 +1205,43 @@ Their archetype: {selected_archetype['name']}
 Archetype description: {selected_archetype['description']}
 
 {personalization_block if personalization_block else ""}
+
+Answer depth: {answer_signal}
+
+SPARSE answers (1-2 words each):
+- The original thought is 80% of your material
+- Each word they chose is a deliberate compression — ask what
+  that specific word reveals, not what it says on the surface
+- Go deep into the original thought to find the formation
+
+MODERATE answers (3-8 words each):
+- Weight thought and answers equally
+- Look for what they started to say and stopped
+- The gap between the question asked and the answer given
+  is often more revealing than the answer itself
+
+DESCRIPTIVE answers (8+ words each):
+- These are your richest material
+- Do NOT summarize what they said — they already know what they said
+- Your job is to identify the FRAME they are operating from
+- Name the logic they are using that they cannot see themselves
+- Find the assumption underneath the assumption
+- Find where their self-narrative has a gap or contradiction
+- The most valuable thing you can do: show them the rule they
+  are living by that they never consciously chose
+- e.g. if they say "I work hard but nothing pays off" — don't
+  say "you work hard and feel unrewarded." Say: "You've made
+  effort the only variable you're allowed to control, so when
+  outcomes don't match, the only conclusion left is that you
+  are the problem."
+
+IN ALL CASES:
+- Never restate or paraphrase their words
+- shaped_by must contain zero exact phrases from their input
+- You are not reflecting — you are revealing
+- Stay inside their specific situation, never go generic
+- The person should feel slightly exposed, not validated
+- Validation is cheap. Recognition is rare. Give them recognition.
 
 Generate exactly three things. Output as JSON:
 
@@ -1173,6 +1304,11 @@ The question should make them go quiet, not nod.
 It should be about THEM — not about reframing 
 the situation.
 
+HARD RULE: shaped_by must not contain any exact phrase longer
+than 2 words that appears in either the thought or the answers.
+If it does, you are paraphrasing. Rewrite until it's an
+inference, not a reflection.
+
 Output format:
 {{
   "shaped_by": "...",
@@ -1181,7 +1317,7 @@ Output format:
 }}"""
 
     try:
-        raw = _chat(report_prompt, system=report_system).strip()
+        raw = _chat(report_prompt, system=report_system, max_tokens=600).strip()
         if raw.startswith("```"):
             raw = raw.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
         if "{" in raw and "}" in raw:
@@ -1231,10 +1367,26 @@ def get_closing(
     # Format answers for prompt
     if isinstance(answers, dict):
         answers_text = "\n".join([f"- {q}: {a}" for q, a in answers.items() if a])
+        answer_strings = [str(a).strip() for a in answers.values() if a]
     elif isinstance(answers, list):
         answers_text = "\n".join([f"- {a}" for a in answers if a])
+        answer_strings = [str(a).strip() for a in answers if a]
     else:
         answers_text = str(answers) if answers else "No specific answers provided."
+        answer_strings = []
+
+    total_words = sum(len(a.split()) for a in answer_strings
+                      if a and a.strip())
+    avg_words = total_words / max(
+        len([a for a in answer_strings if a and a.strip()]), 1
+    )
+
+    if avg_words <= 2:
+        answer_depth = "SPARSE"
+    elif avg_words <= 8:
+        answer_depth = "MODERATE"
+    else:
+        answer_depth = "DESCRIPTIVE"
 
     mood_text = mood_word or "neutral"
 
@@ -1310,6 +1462,23 @@ Their mood: {mood_text}
 
 {personalization_block if personalization_block else ""}
 
+Answer depth: {answer_depth}
+
+If SPARSE or MODERATE:
+- The original thought is your primary material
+- The answers tell you the direction, not the full story
+- Movement 1 must be an inference about who they are,
+  not a restatement of what they said
+- Go deeper into the original thought than the answers suggest
+
+If DESCRIPTIVE:
+- The answers are rich — use their specific language
+  as texture, not as the truth itself
+- Find the contradiction between what they said
+  and how they said it
+- The closing should name something they revealed
+  without meaning to
+
 Write the closing. Two movements. Blank line between them.
 No labels. No headers.
 
@@ -1351,7 +1520,7 @@ CRITICAL CHECKS before outputting:
 6. Under 70 words total? If not — cut ruthlessly."""
 
     try:
-        result = _chat(prompt, system=system).strip()
+        result = _chat(prompt, system=system, max_tokens=300).strip()
         if result and len(result) > 0:
             return result
     except Exception as e:
@@ -1491,7 +1660,7 @@ Return ONLY a JSON array, nothing else:
 [{{"phrase": "...", "description": "..."}}, ...]"""
 
     try:
-        raw = _chat(prompt, system=system).strip()
+        raw = _chat(prompt, system=system, max_tokens=150).strip()
         if not raw:
             return MOOD_SUGGESTIONS_FALLBACK
         if raw.startswith("```"):
@@ -1619,7 +1788,7 @@ Write TO them. Make it specific to THEIR entries, not generic wisdom. No salutat
 Count your words. 100-150 only."""
 
     try:
-        out = _chat(prompt, system=system).strip()
+        out = _chat(prompt, system=system, max_tokens=800).strip()
         lines = out.split('\n')
         if lines and lines[0].strip().lower().startswith(('dear', 'hi ', 'hello', 'hey')):
             out = '\n'.join(lines[1:]).strip()
@@ -1719,6 +1888,45 @@ Return JSON array only:
     except (json.JSONDecodeError, Exception) as e:
         logger.warning("Batch mood conversion failed: %s", e)
     return [{"original": m, "feeling": m} for m in unique_moods]
+
+
+def generate_return_card(context: str) -> str | None:
+    """
+    Generate a return card that connects the user's internal pattern
+    to a real-world anchor (person, study, concept, historical moment).
+    3-4 lines max. Returns the card text or None on failure.
+    """
+    system = """You write 3-4 lines. No more.
+
+You connect this person's internal pattern to something real in the world — a specific person, a named psychological concept, a historical moment, a study, a cultural phenomenon. The anchor must be real and specific. Never invented.
+
+Structure:
+Line 1-2: The real world anchor and what it observed or did.
+Line 3: The connection to this person's exact pattern.
+Line 4: One line that lands on who they are. Slightly uncomfortable. Not consoling.
+
+Rules:
+- The real world anchor must be named specifically — a person's name, a study's finding, a concept's name. Never vague ('some people', 'research shows', 'many find').
+- Never start with 'You'
+- Never summarise what they wrote
+- Never use the words: journey, process, growth, healing, reflect, pattern, cope, navigate
+- The last line must be about who they ARE, not what they should do
+- Plain language. Nothing needs decoding.
+- 3-4 lines total. Hard limit."""
+
+    prompt = f"""Based on this person's reflection data, write a return card.
+
+{context}
+
+Write 3-4 lines only. Connect their specific situation to a real, named anchor from the world — a person, a study, a concept, a moment in history. Make the connection feel inevitable, not forced. The last line should be about who they are."""
+
+    try:
+        result = _chat(prompt, system=system, max_tokens=120).strip()
+        if result and len(result) > 20:
+            return result
+    except Exception as e:
+        logger.warning("Return card generation failed: %s", e)
+    return None
 
 
 def llm_chat(prompt: str, system: str | None = None) -> str:

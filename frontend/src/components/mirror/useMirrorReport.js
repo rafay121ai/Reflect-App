@@ -5,6 +5,7 @@ export function useMirrorReport(options) {
   const [report, setReport] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
+  const [isSlow, setIsSlow] = useState(false);
   const [retryCount, setRetryCount] = useState(0);
   const hasFetchedRef = useRef(false);
 
@@ -27,29 +28,18 @@ export function useMirrorReport(options) {
   const questionsKey = Array.isArray(questions) ? questions.join("||") : "";
 
   useEffect(() => {
-    console.log("[mirror] effect ran", {
-      enabled,
-      hasFetched: hasFetchedRef.current,
-      answersKey,
-      thought: thought?.slice(0, 30),
-    });
-
-    if (!enabled || hasFetchedRef.current) {
-      console.log("[mirror] bailed — enabled:", enabled, "hasFetched:", hasFetchedRef.current);
-      return;
-    }
-    if (!apiBase || !thought?.trim()) {
-      console.log("[mirror] bailed — missing apiBase or thought");
-      return;
-    }
-
-    console.log("[mirror] FIRING FETCH, answers:", answersKey);
+    if (!enabled || hasFetchedRef.current) return;
+    if (!apiBase || !thought?.trim()) return;
 
     const answersArr = Array.isArray(answers) ? answers : [];
     hasFetchedRef.current = true;
     let cancelled = false;
     setLoading(true);
     setError(null);
+
+    const controller = new AbortController();
+    const hardTimeout = setTimeout(() => controller.abort(), 90000);
+    const warnTimeout = setTimeout(() => setIsSlow(true), 30000);
 
     const isGuest = !accessToken;
     const base = apiBase.replace(/\/$/, "").replace(/\/api$/, "");
@@ -66,31 +56,46 @@ export function useMirrorReport(options) {
         answers: answersArr,
         reflection_id: reflectionId || "",
       }),
+      signal: controller.signal,
     })
       .then((res) => {
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         return res.json();
       })
       .then((data) => {
-        console.log("[mirror] fetch succeeded", data);
-        if (!cancelled) setReport(data);
+        if (!cancelled) {
+          if (data.crisis) {
+            setError({ crisis: true });
+          } else {
+            setReport(data);
+          }
+        }
       })
       .catch((err) => {
-        console.error("[mirror] fetch failed", err);
         if (!cancelled) {
           hasFetchedRef.current = false;
-          setError(err);
+          if (err.name === "AbortError") {
+            setError({ timeout: true });
+          } else {
+            setError(err);
+          }
         }
       })
       .finally(() => {
+        clearTimeout(hardTimeout);
+        clearTimeout(warnTimeout);
+        setIsSlow(false);
         if (!cancelled) setLoading(false);
       });
 
     return () => {
       cancelled = true;
+      controller.abort();
+      clearTimeout(hardTimeout);
+      clearTimeout(warnTimeout);
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [enabled, retryCount, apiBase, thought, questionsKey, answersKey, reflectionId, accessToken]);
 
-  return { report, loading, error, retry };
+  return { report, loading, error, retry, isSlow };
 }

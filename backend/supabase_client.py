@@ -649,6 +649,104 @@ def save_mirror_report(reflection_id: str, report: dict) -> None:
         logger.warning("save_mirror_report failed: %s", type(e).__name__)
 
 
+def update_reflection_return_card(reflection_id: str, return_card: str) -> bool:
+    """Save generated return card text to reflection row."""
+    if not reflection_id or not return_card:
+        return False
+    client = _get_client()
+    if not client:
+        return False
+    try:
+        client.table("reflections").update({
+            "return_card": return_card.strip()[:2000],
+        }).eq("id", reflection_id).execute()
+        return True
+    except Exception as e:
+        logger.warning("update_reflection_return_card failed: %s", type(e).__name__)
+        return False
+
+
+def get_return_card_for_user(user_id: str) -> dict | None:
+    """
+    Find the most recent reflection with a non-null return_card for this user.
+    Returns {id, return_card, created_at} or None.
+    """
+    if not user_id or not str(user_id).strip():
+        return None
+    client = _get_client()
+    if not client:
+        return None
+    try:
+        response = (
+            client.table("reflections")
+            .select("id, return_card, created_at")
+            .eq("user_id", user_id.strip())
+            .not_.is_("return_card", "null")
+            .order("created_at", desc=True)
+            .limit(1)
+            .execute()
+        )
+        if response.data and len(response.data) > 0:
+            return response.data[0]
+    except Exception as e:
+        logger.warning("get_return_card_for_user failed: %s", type(e).__name__)
+    return None
+
+
+def count_reflections_for_user(user_id: str) -> int:
+    """Count total reflections for this user."""
+    if not user_id or not str(user_id).strip():
+        return 0
+    client = _get_client()
+    if not client:
+        return 0
+    try:
+        response = (
+            client.table("reflections")
+            .select("id")
+            .eq("user_id", user_id.strip())
+            .execute()
+        )
+        return len(response.data or [])
+    except Exception as e:
+        logger.warning("count_reflections_for_user failed: %s", type(e).__name__)
+        return 0
+
+
+def get_reflections_for_return_card(user_id: str, current_reflection_id: str | None = None) -> dict:
+    """
+    Fetch reflection data needed to generate a return card.
+    Returns dict with: total_count, reflections (list of {id, thought, mirror_report, mood_word, created_at}).
+    mirror_report contains the archetype + shaped_by.
+    """
+    if not user_id or not str(user_id).strip():
+        return {"total_count": 0, "reflections": []}
+    client = _get_client()
+    if not client:
+        return {"total_count": 0, "reflections": []}
+    try:
+        response = (
+            client.table("reflections")
+            .select("id, thought, mirror_report, created_at")
+            .eq("user_id", user_id.strip())
+            .order("created_at", desc=True)
+            .limit(50)
+            .execute()
+        )
+        rows = response.data or []
+        # Also get mood_words from saved_reflections
+        saved = list_saved_reflections_all(user_id.strip())
+        mood_map = {}
+        for s in saved:
+            mw = (s.get("mood_word") or "").strip()
+            if mw:
+                mood_map[s.get("id", "")] = mw
+        return {"total_count": len(rows), "reflections": rows, "mood_map": mood_map}
+    except Exception as e:
+        logger.warning("get_reflections_for_return_card failed: %s", type(e).__name__)
+        return {"total_count": 0, "reflections": []}
+
+
 # ----- Saved reflections (history + open later) -----
 
 def _cleanup_old_saved_reflections():

@@ -1,10 +1,13 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useMemo } from "react";
 import "./App.css";
 import axios from "axios";
 import { AnimatePresence } from "framer-motion";
 import InputScreen from "./components/InputScreen";
 import LoadingState from "./components/LoadingState";
 import ReflectionFlow from "./components/ReflectionFlow";
+import ReflectionErrorBoundary from "./components/ReflectionErrorBoundary";
+import CrisisScreen from "./components/CrisisScreen";
+import ReturnCard from "./components/ReturnCard";
 import Onboarding from "./components/Onboarding";
 import ViewReflection from "./components/reflection/ViewReflection";
 import ViewSavedReflection from "./components/reflection/ViewSavedReflection";
@@ -22,6 +25,7 @@ import PaywallLimitModal from "./components/PaywallLimitModal";
 import GuestSignupModal from "./components/GuestSignupModal";
 import TrialWelcomeModal, { hasSeenTrialWelcome } from "./components/TrialWelcomeModal";
 import TrialExpiredModal from "./components/TrialExpiredModal";
+import CookieConsent from "./components/CookieConsent";
 import { BookOpen, Settings } from "lucide-react";
 import AppLogo from "./components/AppLogo";
 import { supabase } from "./lib/supabase";
@@ -77,9 +81,14 @@ function App() {
   const [usage, setUsage] = useState(null);
   const [showTrialWelcome, setShowTrialWelcome] = useState(false);
   const [showTrialBanner, setShowTrialBanner] = useState(false);
+  const [trialBannerMessage, setTrialBannerMessage] = useState("");
   const [showTrialExpiredModal, setShowTrialExpiredModal] = useState(false);
   const [signInModalLoading, setSignInModalLoading] = useState(false);
   const [saveError, setSaveError] = useState(false);
+  const [showCrisisScreen, setShowCrisisScreen] = useState(false);
+  const [returnCard, setReturnCard] = useState(null);
+  const [isSlowNetwork, setIsSlowNetwork] = useState(false);
+  const [reflectTimeoutError, setReflectTimeoutError] = useState(false);
   const revisitBannerTimeoutRef = useRef(null);
   const dailyNudgeShownThisSession = useRef(false);
   const savePayloadRef = useRef(null);
@@ -92,6 +101,11 @@ function App() {
   const authRequired = !!supabase;
   const userId = user?.id ?? getOrCreateUserIdentifier();
   const prevUserRef = useRef(user);
+
+  // Silent health ping on load to wake Railway (cold start)
+  useEffect(() => {
+    fetch(`${API}/health`, { method: "GET" }).catch(() => {});
+  }, []);
 
   // Clear all reflection, mirror, mood, and personalization state on logout so no previous session data remains visible.
   useEffect(() => {
@@ -106,6 +120,7 @@ function App() {
     setDueReminders([]);
     setHistoryAll([]);
     setClosingText(null);
+    setReturnCard(null);
     setPendingSaveAfterSignIn(null);
     setAppState(STATES.INPUT);
     setHistoryDropdownOpen(false);
@@ -115,6 +130,7 @@ function App() {
     setShowSignInModal(false);
     try {
       localStorage.removeItem(REVISIT_LATER_KEY);
+      localStorage.removeItem("reflect_draft");
     } catch (_) {}
     if (dailyNudgeShownThisSession.current) dailyNudgeShownThisSession.current = false;
   }, [user]);
@@ -133,6 +149,22 @@ function App() {
       setAppState(STATES.ONBOARDING);
     }
   }, [user?.id, authRequired]);
+
+  useEffect(() => {
+    if (!user?.id) return;
+    (async () => {
+      try {
+        const res = await axios.get(`${API}/user/return-card`, { headers: getAuthHeaders() });
+        if (res.data?.has_card) {
+          const rid = res.data.reflection_id;
+          try {
+            if (localStorage.getItem(`reflect_seen_card_${rid}`) === "true") return;
+          } catch (_) {}
+          setReturnCard(res.data);
+        }
+      } catch (_) {}
+    })();
+  }, [user?.id]);
 
   useEffect(() => {
     openReflectionRef.current = (id) => {
@@ -268,10 +300,10 @@ function App() {
     }
   }, [user, authRequired]);
 
-  // Trial day-7 banner and expired modal (web only, uses /api/usage)
+  // Trial warning banners and expired modal (web only, uses /api/usage)
   useEffect(() => {
     if (!usage || !user || !authRequired) return;
-    const { plan_type: planType, days_remaining: daysRemaining, is_expired: isExpired } = usage;
+    const { plan_type: planType, days_remaining: daysRemaining, is_expired: isExpired, reflections_used: used } = usage;
     if (planType !== "trial") {
       setShowTrialBanner(false);
       setShowTrialExpiredModal(false);
@@ -291,11 +323,27 @@ function App() {
       return;
     }
     if (isExpired) {
-      setShowTrialExpiredModal(true);
+      let snoozed = false;
+      try {
+        const snoozeUntil = window.localStorage.getItem("reflect_trial_modal_snoozed");
+        if (snoozeUntil && new Date(snoozeUntil) > new Date()) snoozed = true;
+      } catch {}
+      setShowTrialExpiredModal(!snoozed);
       setShowTrialBanner(false);
       return;
     }
-    if (typeof daysRemaining === "number" && daysRemaining === 1) {
+    let bannerMsg = null;
+    if (typeof daysRemaining === "number") {
+      if (daysRemaining === 1) {
+        bannerMsg = "Last day. Your reflections don't disappear — but new ones will need an upgrade.";
+      } else if (daysRemaining === 2) {
+        bannerMsg = "2 days left on your trial.";
+      } else if (daysRemaining === 7) {
+        const count = typeof used === "number" ? used : 0;
+        bannerMsg = `You're halfway through your trial. ${count} reflection${count === 1 ? "" : "s"} in. Keep going — the mirror gets sharper.`;
+      }
+    }
+    if (bannerMsg) {
       if (typeof window === "undefined") return;
       const todayKey = new Date().toISOString().slice(0, 10);
       const storageKey = `reflect_trial_banner_dismissed_${todayKey}`;
@@ -306,6 +354,7 @@ function App() {
         dismissed = false;
       }
       if (!dismissed) {
+        setTrialBannerMessage(bannerMsg);
         setShowTrialBanner(true);
       }
     } else {
@@ -361,21 +410,40 @@ function App() {
       return;
     }
 
+    setReflectTimeoutError(false);
     setIsReflectSubmitting(true);
     setAppState(STATES.LOADING);
 
+    const controller = new AbortController();
+    const hardTimeout = setTimeout(() => controller.abort(), 90000);
+    const warnTimeout = setTimeout(() => setIsSlowNetwork(true), 30000);
+
     try {
-      // Include reflection mode in request - affects LLM tone/length
       const reflectionMode = getReflectionMode();
       const url = user ? `${API}/reflect` : `${API}/reflect/guest`;
-      const config = user ? { headers: getAuthHeaders() } : {};
+      const config = user ? { headers: getAuthHeaders(), signal: controller.signal } : { signal: controller.signal };
       const response = await axios.post(url, {
         thought: thought.trim(),
         reflection_mode: reflectionMode,
       }, config);
-      setReflection({ id: response.data.id ?? null, sections: response.data.sections });
+      if (response.data.crisis) {
+        setShowCrisisScreen(true);
+        setAppState(STATES.INPUT);
+        return;
+      }
+      try { localStorage.removeItem("reflect_draft"); } catch (_) {}
+      setReflection({
+        id: response.data.id ?? null,
+        sections: response.data.sections,
+        flowMode: response.data.flow_mode || "standard",
+      });
       setAppState(STATES.REFLECTION);
     } catch (error) {
+      if (axios.isCancel(error) || error?.name === "AbortError" || error?.code === "ERR_CANCELED") {
+        setReflectTimeoutError(true);
+        setAppState(STATES.LOADING);
+        return;
+      }
       devError("Reflection error:", error);
       const isLimitReached = error.response?.status === 429
         && (error.response?.data?.error === "Reflection limit reached" || error.response?.data?.detail === "Reflection limit reached");
@@ -396,14 +464,22 @@ function App() {
       }
       setAppState(STATES.INPUT);
     } finally {
+      clearTimeout(hardTimeout);
+      clearTimeout(warnTimeout);
+      setIsSlowNetwork(false);
       setIsReflectSubmitting(false);
     }
   };
 
-  const handleGetPersonalizedMirror = async (questionResponses) => {
+  const handleGetPersonalizedMirror = async (questionResponses, callbacks = {}) => {
+    const controller = new AbortController();
+    const hardTimeout = setTimeout(() => controller.abort(), 90000);
+    const warnTimeout = setTimeout(() => callbacks.onSlow?.(), 30000);
     try {
       const url = user ? `${API}/mirror/personalized` : `${API}/mirror/personalized/guest`;
-      const config = user ? { headers: getAuthHeaders() } : {};
+      const config = user
+        ? { headers: getAuthHeaders(), signal: controller.signal }
+        : { signal: controller.signal };
       const response = await axios.post(url, {
         thought: thought.trim(),
         questions: questionResponses.map((r) => r.question),
@@ -413,8 +489,15 @@ function App() {
       return response.data.content;
     } catch (error) {
       devError("Personalized mirror error:", error);
-      toast.error("We couldn't load your reflection. Try again.");
+      if (axios.isCancel(error) || error?.name === "AbortError" || error?.code === "ERR_CANCELED") {
+        toast.error("This is taking longer than usual. Please try again.");
+      } else {
+        toast.error("We couldn't load your reflection. Try again.");
+      }
       return null;
+    } finally {
+      clearTimeout(hardTimeout);
+      clearTimeout(warnTimeout);
     }
   };
 
@@ -433,10 +516,14 @@ function App() {
     }
   };
 
-  const handleGetClosing = async (moodWord, answers, personalizedMirror) => {
+  const handleGetClosing = async (moodWord, answers, personalizedMirror, callbacks = {}) => {
+    const controller = new AbortController();
+    const hardTimeout = setTimeout(() => controller.abort(), 90000);
+    const warnTimeout = setTimeout(() => callbacks.onSlow?.(), 30000);
+
     try {
       const url = user ? `${API}/closing` : `${API}/closing/guest`;
-      const config = user ? { headers: getAuthHeaders() } : {};
+      const config = user ? { headers: getAuthHeaders(), signal: controller.signal } : { signal: controller.signal };
       const response = await axios.post(url, {
         thought: thought.trim(),
         answers: Array.isArray(answers) ? answers.map(a => a.response || a) : answers,
@@ -445,16 +532,27 @@ function App() {
         ...(user && reflection?.id && { reflection_id: reflection.id }),
         reflection_mode: getReflectionMode(),
       }, config);
-      
+
+      if (response.data.crisis) {
+        setShowCrisisScreen(true);
+        return null;
+      }
       const closing = response.data.closing_text;
       setClosingText(closing);
       return closing;
     } catch (error) {
-      devError("Closing generation error:", error);
-      toast.error("We couldn't load your reflection. Try again.");
+      if (axios.isCancel(error) || error?.name === "AbortError" || error?.code === "ERR_CANCELED") {
+        toast.error("This is taking longer than usual. Please try again.");
+      } else {
+        devError("Closing generation error:", error);
+        toast.error("We couldn't load your reflection. Try again.");
+      }
       const fallback = "You showed up today. That matters. Between now and next time — notice what you're already carrying. It's worth your attention.";
       setClosingText(fallback);
       return fallback;
+    } finally {
+      clearTimeout(hardTimeout);
+      clearTimeout(warnTimeout);
     }
   };
 
@@ -621,6 +719,92 @@ function App() {
     setAppState(STATES.INPUT);
   };
 
+  const reflectionInsight = useMemo(() => {
+    if (!historyAll || historyAll.length === 0) return null;
+    const total = historyAll.length;
+
+    const timeBuckets = { morning: 0, afternoon: 0, evening: 0, night: 0 };
+    const dayCounts = [0, 0, 0, 0, 0, 0, 0];
+    const dayNames = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+
+    for (const item of historyAll) {
+      if (!item.created_at) continue;
+      const d = new Date(item.created_at);
+      if (isNaN(d.getTime())) continue;
+      const h = d.getHours();
+      if (h >= 5 && h <= 11) timeBuckets.morning++;
+      else if (h >= 12 && h <= 16) timeBuckets.afternoon++;
+      else if (h >= 17 && h <= 21) timeBuckets.evening++;
+      else timeBuckets.night++;
+      dayCounts[d.getDay()]++;
+    }
+
+    const timeOfDay = Object.entries(timeBuckets).sort((a, b) => b[1] - a[1])[0][0];
+    const mostCommonDayIdx = dayCounts.indexOf(Math.max(...dayCounts));
+    const mostCommonDay = dayNames[mostCommonDayIdx];
+
+    const POSITIVE = new Set(["calm", "grateful", "hopeful", "clear", "lighter", "proud", "relieved", "excited", "peaceful", "good"]);
+    const HEAVY = new Set(["anxious", "tired", "sad", "frustrated", "overwhelmed", "stuck", "heavy", "lost", "numb", "scared", "angry"]);
+
+    const classifyMood = (raw) => {
+      const w = (raw || "").trim().toLowerCase();
+      if (POSITIVE.has(w)) return "positive";
+      if (HEAVY.has(w)) return "heavy";
+      const words = w.split(/\s+/);
+      for (const word of words) {
+        if (POSITIVE.has(word)) return "positive";
+        if (HEAVY.has(word)) return "heavy";
+      }
+      return "neutral";
+    };
+    const MOOD_COLORS = { positive: "#86EFAC", heavy: "#FCA5A5", neutral: "#FCD34D" };
+
+    const withMood = historyAll.filter(i => (i.mood_word || "").trim()).slice(0, 5);
+    const moodDots = withMood.map(i => {
+      const cat = classifyMood(i.mood_word);
+      return { color: MOOD_COLORS[cat], word: i.mood_word };
+    });
+    while (moodDots.length < 5) moodDots.push({ color: "#E2E8F0", word: null });
+
+    let moodTrend = null;
+    if (withMood.length >= 5) {
+      const toScore = (w) => {
+        const cat = classifyMood(w);
+        return cat === "positive" ? 1 : cat === "heavy" ? -1 : 0;
+      };
+      const recent3 = withMood.slice(0, 3).map(i => toScore(i.mood_word));
+      const prev2 = withMood.slice(3, 5).map(i => toScore(i.mood_word));
+      const recentAvg = recent3.reduce((a, b) => a + b, 0) / 3;
+      const prevAvg = prev2.reduce((a, b) => a + b, 0) / 2;
+      if (recentAvg > prevAvg && recentAvg > 0) moodTrend = "lifting";
+      else if (recentAvg < prevAvg && recentAvg < 0) moodTrend = "heavier lately";
+      else moodTrend = "moving through it";
+    }
+
+    let observation;
+    if (total >= 10 && moodTrend === "lifting") {
+      observation = `${total} reflections. You show up most on ${mostCommonDay}s. The last few have been lighter.`;
+    } else if (total >= 10 && moodTrend === "heavier lately") {
+      observation = `${total} reflections. Something has been heavy lately. You keep showing up anyway.`;
+    } else if (total >= 5 && timeOfDay === "evening") {
+      observation = `${total} reflections. You tend to come here in the evening — when the day has had time to settle.`;
+    } else if (total >= 5 && timeOfDay === "morning") {
+      observation = `${total} reflections. You process things before the day starts. Most people wait until they have no choice.`;
+    } else if (total >= 5) {
+      observation = `${total} reflections. You're ${["a", "e", "i", "o", "u"].includes(timeOfDay[0]) ? "an" : "a"} ${timeOfDay} person.`;
+    } else if (total === 4) {
+      observation = "4 reflections. The mirror is getting sharper.";
+    } else if (total === 3) {
+      observation = "3 reflections. Something is starting to emerge.";
+    } else if (total === 2) {
+      observation = "2 reflections. Your pattern is just starting to take shape.";
+    } else {
+      observation = "1 reflection. Everyone starts somewhere.";
+    }
+
+    return { observation, moodDots, hasMoodData: withMood.length > 0 };
+  }, [historyAll]);
+
   const hasRevisitItems = revisitLaterIds.length > 0 || dueReminders.length > 0;
   const hasRevisitBanner = hasRevisitItems && appState !== STATES.VIEWING_REFLECTION && !viewingReflectionId && !revisitBannerHidden;
 
@@ -677,6 +861,19 @@ function App() {
       <Analytics />
       <Toaster position="top-center" richColors />
 
+      {/* Crisis screen: shown when crisis signals detected in user input */}
+      <AnimatePresence>
+        {showCrisisScreen && (
+          <CrisisScreen
+            onContinue={() => {
+              setShowCrisisScreen(false);
+              setThought("");
+              setAppState(STATES.INPUT);
+            }}
+          />
+        )}
+      </AnimatePresence>
+
       {/* Paywall limit modal: when user hits 429 (reflection limit) — native paywall or this fallback */}
       <AnimatePresence>
         {showPaywallLimitModal && (
@@ -719,7 +916,10 @@ function App() {
 
       <AnimatePresence>
         {showTrialExpiredModal && (
-          <TrialExpiredModal onFallbackSettings={() => setSettingsPanelOpen(true)} />
+          <TrialExpiredModal
+            onFallbackSettings={() => setSettingsPanelOpen(true)}
+            onDismiss={() => setShowTrialExpiredModal(false)}
+          />
         )}
       </AnimatePresence>
 
@@ -747,6 +947,12 @@ function App() {
               style={{ fontSize: "14px", color: "#718096", lineHeight: 1.6 }}
             >
               Sign in to unlock your full mirror and track how you think across reflections.
+            </p>
+            <p
+              className="text-center"
+              style={{ fontSize: 11, color: "#A0AEC0", marginBottom: 16 }}
+            >
+              Free for 14 days. No card required.
             </p>
             <div className="mt-6">
               <button
@@ -824,13 +1030,38 @@ function App() {
               <div className="px-4 py-3 border-b border-[#E2E8F0] shrink-0">
                 <h2 className="text-sm font-medium text-[#4A5568]">My reflections</h2>
               </div>
+              {reflectionInsight && historyAll.length > 0 && (
+                <div style={{ padding: "12px 16px 8px 16px" }}>
+                  <p style={{ fontSize: 11, color: "#718096", fontStyle: "italic", margin: 0, lineHeight: 1.5 }}>
+                    {reflectionInsight.observation}
+                  </p>
+                  {reflectionInsight.hasMoodData && (
+                    <div style={{ display: "flex", gap: 6, marginTop: 8, marginBottom: 8 }}>
+                      {reflectionInsight.moodDots.map((dot, i) => (
+                        <span
+                          key={i}
+                          title={dot.word || undefined}
+                          style={{
+                            width: 8,
+                            height: 8,
+                            borderRadius: "50%",
+                            background: dot.color,
+                            display: "inline-block",
+                            cursor: dot.word ? "default" : undefined,
+                          }}
+                        />
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
               <div className="min-h-0 max-h-[12rem] overflow-y-auto py-2 [&::-webkit-scrollbar]:hidden [scrollbar-width:none] [-ms-overflow-style:none]">
                 {historyLoading ? (
                   <p className="text-sm text-[#718096] py-4 px-4 text-center">Loading…</p>
                 ) : !user ? (
                   <div className="py-4 px-4 flex flex-col items-center gap-3">
-                    <p className="text-sm text-[#718096] text-center">
-                      Sign in to see your reflections.
+                    <p className="text-center" style={{ fontSize: 13, color: "#718096" }}>
+                      Sign in to see your reflections and unlock your full mirror. Free for 14 days.
                     </p>
                     <button
                       type="button"
@@ -962,7 +1193,7 @@ function App() {
       {showTrialBanner && (
         <div className="sticky top-0 z-30 mx-auto max-w-2xl px-6 py-3 flex items-center justify-between gap-3 bg-[#FFB4A9]/20 text-[#4A5568] border-b border-[#FFB4A9]/30">
           <p className="text-sm">
-            One day left — no pressure, just a heads up.
+            {trialBannerMessage}
           </p>
           <button
             type="button"
@@ -1009,74 +1240,121 @@ function App() {
               setThought={setThought}
               onSubmit={handleSubmit}
               isSubmitting={isReflectSubmitting}
+              returnCard={returnCard}
+              onDismissReturnCard={() => setReturnCard(null)}
+              isReturning={historyAll.length > 0}
+              reflectionCount={historyAll.length}
             />
           )}
 
           {appState === STATES.LOADING && (
-            <LoadingState key="loading" />
+            <div
+              className="flex flex-col items-center justify-center min-h-[60vh] gap-6"
+              style={{ background: "#FFFDF7" }}
+              data-testid="loading-area"
+            >
+              {reflectTimeoutError ? (
+                <>
+                  <p className="text-center text-[#718096] text-sm" style={{ fontSize: 14 }}>
+                    This is taking longer than usual.
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setReflectTimeoutError(false);
+                      handleSubmit();
+                    }}
+                    className="text-[#2d3748] font-medium text-sm bg-transparent border-none cursor-pointer underline underline-offset-2 hover:opacity-80"
+                  >
+                    Try again
+                  </button>
+                </>
+              ) : (
+                <>
+                  {isSlowNetwork && (
+                    <p
+                      className="text-center text-[#718096]"
+                      style={{ fontSize: 14 }}
+                      data-testid="slow-network-banner"
+                    >
+                      This is taking a moment — still working on it.
+                    </p>
+                  )}
+                  <LoadingState key="loading" />
+                </>
+              )}
+            </div>
           )}
 
           {appState === STATES.REFLECTION && reflection && !viewingReflectionId && (
-            <ReflectionFlow
-              key="reflection"
-              apiBase={API}
-              accessToken={session?.access_token ?? null}
-              sections={reflection.sections}
-              originalThought={thought}
-              reflectionId={reflection.id ?? null}
-              onGetPersonalizedMirror={handleGetPersonalizedMirror}
-              onFetchMoodSuggestions={handleFetchMoodSuggestions}
-              onMoodSubmit={user ? handleMoodSubmit : undefined}
-              onSaveHistory={user ? handleSaveHistory : undefined}
-              onGetClosing={handleGetClosing}
-              onComeBackLater={handleComeBackLater}
-              onSetReminder={handleSetReminder}
-              onReflectAnother={handleReflectAnother}
-              onStartFresh={handleStartFresh}
-              saveError={saveError}
-              onRetrySave={() => {
-                setSaveError(false);
-                const p = savePayloadRef.current;
-                if (p) handleSaveHistory(p.rawText, p.answers, p.mirrorResponse, p.moodWord, p.options);
-              }}
-              onReflectionComplete={
-                user
-                  ? undefined
-                  : (data) => {
-                      const payload = {
-                        thought: data.thought,
-                        mirror: data.mirror,
-                        mood: data.mood,
-                        closing: data.closing,
-                        sections: reflection?.sections ?? [],
-                      };
-                      saveGuestReflectionToDb(API, payload).catch(() => {});
-                      const count = saveGuestReflection({
-                        thought: data.thought,
-                        mirror: data.mirror,
-                        mood: data.mood,
-                        closing: data.closing,
-                        created_at: new Date().toISOString(),
-                      });
-                      if (count === 1) {
-                        setGuestSignupStage("soft");
-                        setShowGuestSignupModal(true);
-                      } else if (count === 2) {
-                        setGuestSignupStage("firm");
-                        setShowGuestSignupModal(true);
+            <ReflectionErrorBoundary key="reflection-boundary" onReset={handleStartFresh}>
+              <ReflectionFlow
+                key="reflection"
+                apiBase={API}
+                accessToken={session?.access_token ?? null}
+                sections={reflection.sections}
+                originalThought={thought}
+                reflectionId={reflection.id ?? null}
+                flowMode={reflection?.flowMode || "standard"}
+                onGetPersonalizedMirror={handleGetPersonalizedMirror}
+                onFetchMoodSuggestions={handleFetchMoodSuggestions}
+                onMoodSubmit={user ? handleMoodSubmit : undefined}
+                onSaveHistory={user ? handleSaveHistory : undefined}
+                onGetClosing={handleGetClosing}
+                onComeBackLater={handleComeBackLater}
+                onSetReminder={handleSetReminder}
+                onReflectAnother={handleReflectAnother}
+                onStartFresh={handleStartFresh}
+                saveError={saveError}
+                onRetrySave={() => {
+                  setSaveError(false);
+                  const p = savePayloadRef.current;
+                  if (p) handleSaveHistory(p.rawText, p.answers, p.mirrorResponse, p.moodWord, p.options);
+                }}
+                onReflectionComplete={
+                  user
+                    ? undefined
+                    : (data) => {
+                        const payload = {
+                          thought: data.thought,
+                          mirror: data.mirror,
+                          mood: data.mood,
+                          closing: data.closing,
+                          sections: reflection?.sections ?? [],
+                        };
+                        saveGuestReflectionToDb(API, payload).catch(() => {});
+                        const count = saveGuestReflection({
+                          thought: data.thought,
+                          mirror: data.mirror,
+                          mood: data.mood,
+                          closing: data.closing,
+                          created_at: new Date().toISOString(),
+                        });
+                        if (count === 1) {
+                          setGuestSignupStage("soft");
+                          setShowGuestSignupModal(true);
+                        } else if (count === 2) {
+                          setGuestSignupStage("firm");
+                          setShowGuestSignupModal(true);
+                        }
                       }
-                    }
-              }
-            />
+                }
+              />
+            </ReflectionErrorBoundary>
           )}
         </AnimatePresence>
       </main>
 
-      <footer className="fixed bottom-0 left-0 right-0 py-4 px-6 text-center bg-gradient-to-t from-[#FFFDF7] to-transparent">
+      <footer
+        className="fixed bottom-0 left-0 right-0 px-6 text-center"
+        style={{ background: "#FFFDF7", paddingTop: "12px", paddingBottom: "16px" }}
+      >
         <p className="text-xs text-[#A0AEC0] tracking-wide" data-testid="footer-disclaimer">
           This is a reflection space, not therapy. If you're in crisis, please reach out to a mental health professional.
         </p>
       </footer>
+
+      <CookieConsent />
     </div>
   );
 }

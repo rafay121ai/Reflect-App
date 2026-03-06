@@ -24,20 +24,20 @@ LLM_PROVIDER = os.getenv("LLM_PROVIDER", "ollama").strip().lower()
 
 def _get_impl():
     if LLM_PROVIDER == "ollama":
-        from ollama_client import get_reflection, get_personalized_mirror, extract_pattern, get_mood_suggestions, get_reminder_message, get_insight_letter, get_closing, convert_moods_to_feelings, llm_chat
-        return get_reflection, get_personalized_mirror, extract_pattern, get_mood_suggestions, get_reminder_message, get_insight_letter, get_closing, convert_moods_to_feelings, llm_chat
+        from ollama_client import get_reflection, get_personalized_mirror, extract_pattern, get_mood_suggestions, get_reminder_message, get_insight_letter, get_closing, convert_moods_to_feelings, llm_chat, generate_return_card
+        return get_reflection, get_personalized_mirror, extract_pattern, get_mood_suggestions, get_reminder_message, get_insight_letter, get_closing, convert_moods_to_feelings, llm_chat, generate_return_card
     if LLM_PROVIDER == "openai":
-        from openai_client import get_reflection, get_personalized_mirror, extract_pattern, get_mood_suggestions, get_reminder_message, get_insight_letter, get_closing, convert_moods_to_feelings, llm_chat
-        return get_reflection, get_personalized_mirror, extract_pattern, get_mood_suggestions, get_reminder_message, get_insight_letter, get_closing, convert_moods_to_feelings, llm_chat
+        from openai_client import get_reflection, get_personalized_mirror, extract_pattern, get_mood_suggestions, get_reminder_message, get_insight_letter, get_closing, convert_moods_to_feelings, llm_chat, generate_return_card
+        return get_reflection, get_personalized_mirror, extract_pattern, get_mood_suggestions, get_reminder_message, get_insight_letter, get_closing, convert_moods_to_feelings, llm_chat, generate_return_card
     if LLM_PROVIDER == "openrouter":
-        from openrouter_client import get_reflection, get_personalized_mirror, extract_pattern, get_mood_suggestions, get_reminder_message, get_insight_letter, get_closing, convert_moods_to_feelings, llm_chat
-        return get_reflection, get_personalized_mirror, extract_pattern, get_mood_suggestions, get_reminder_message, get_insight_letter, get_closing, convert_moods_to_feelings, llm_chat
+        from openrouter_client import get_reflection, get_personalized_mirror, extract_pattern, get_mood_suggestions, get_reminder_message, get_insight_letter, get_closing, convert_moods_to_feelings, llm_chat, generate_return_card
+        return get_reflection, get_personalized_mirror, extract_pattern, get_mood_suggestions, get_reminder_message, get_insight_letter, get_closing, convert_moods_to_feelings, llm_chat, generate_return_card
     logger.warning("Unknown LLM_PROVIDER=%s, using ollama", LLM_PROVIDER)
-    from ollama_client import get_reflection, get_personalized_mirror, extract_pattern, get_mood_suggestions, get_reminder_message, get_insight_letter, get_closing, convert_moods_to_feelings, llm_chat
-    return get_reflection, get_personalized_mirror, extract_pattern, get_mood_suggestions, get_reminder_message, get_insight_letter, get_closing, convert_moods_to_feelings, llm_chat
+    from ollama_client import get_reflection, get_personalized_mirror, extract_pattern, get_mood_suggestions, get_reminder_message, get_insight_letter, get_closing, convert_moods_to_feelings, llm_chat, generate_return_card
+    return get_reflection, get_personalized_mirror, extract_pattern, get_mood_suggestions, get_reminder_message, get_insight_letter, get_closing, convert_moods_to_feelings, llm_chat, generate_return_card
 
 
-_get_reflection, _get_personalized_mirror, _extract_pattern, _get_mood_suggestions, _get_reminder_message, _get_insight_letter, _get_closing, _convert_moods_to_feelings, _llm_chat = _get_impl()
+_get_reflection, _get_personalized_mirror, _extract_pattern, _get_mood_suggestions, _get_reminder_message, _get_insight_letter, _get_closing, _convert_moods_to_feelings, _llm_chat, _generate_return_card = _get_impl()
 
 
 def get_reflection(thought: str, reflection_mode: str = "gentle", user_context: dict | None = None, pattern_history: list[dict] | None = None) -> list[dict]:
@@ -102,6 +102,11 @@ def get_closing(
 def convert_moods_to_feelings(mood_metaphors: list[str]) -> list[dict]:
     """Convert mood metaphors to human-relatable feelings."""
     return _convert_moods_to_feelings(mood_metaphors)
+
+
+def generate_return_card(context: str) -> str | None:
+    """Generate a return card connecting the user's pattern to a real-world anchor."""
+    return _generate_return_card(context)
 
 
 def llm_chat(prompt: str, system: str | None = None) -> str:

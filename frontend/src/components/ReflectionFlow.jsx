@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useMemo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import JourneyCards from "./reflection/JourneyCards";
 import InteractiveQuestions from "./reflection/InteractiveQuestions";
@@ -8,24 +8,8 @@ import MirrorSlides from "./mirror/MirrorSlides";
 import { useMirrorReport } from "./mirror/useMirrorReport";
 import MoodCheckIn from "./reflection/MoodCheckIn";
 import ClosingScreen from "./reflection/ClosingScreen";
+import CrisisScreen from "./CrisisScreen";
 
-const STEPS = {
-  JOURNEY: 0,
-  QUESTIONS: 1,
-  MIRROR: 2,
-  MOOD: 3,
-  CLOSING: 4,
-};
-
-const STEP_LABELS = ["Begin", "Write", "Sit", "Notice", "Carry"];
-
-const STEP_SUBTEXT = [
-  "A gentle landing before we start.",
-  "Put words to what's here.",
-  "Let the reflection meet you.",
-  "Name the feel of this moment.",
-  "Take a breath before you go.",
-];
 
 function MirrorStepBlock({
   apiBase,
@@ -39,11 +23,13 @@ function MirrorStepBlock({
   onMirrorSlidesComplete,
   onComeBackLater,
   onSetReminder,
+  onCrisis,
+  onBack,
 }) {
   const [userChoseReadNow, setUserChoseReadNow] = useState(false);
   const [mirrorOpened, setMirrorOpened] = useState(false);
   const showMirrorReadNow = userChoseReadNow;
-  const { report: mirrorReport, loading: reportLoading, error, retry } = useMirrorReport({
+  const { report: mirrorReport, loading: reportLoading, error, retry, isSlow } = useMirrorReport({
     apiBase,
     thought: originalThought,
     questions,
@@ -52,6 +38,10 @@ function MirrorStepBlock({
     accessToken,
     enabled: mirrorReportEnabled,
   });
+
+  useEffect(() => {
+    if (error?.crisis && onCrisis) onCrisis();
+  }, [error, onCrisis]);
 
   const handleSlidesComplete = () => {
     if (mirrorReport) {
@@ -83,8 +73,28 @@ function MirrorStepBlock({
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
+            position: "relative",
           }}
         >
+          {onBack && (
+            <button
+              type="button"
+              onClick={onBack}
+              style={{
+                position: "absolute",
+                top: 16,
+                left: 16,
+                background: "none",
+                border: "none",
+                cursor: "pointer",
+                color: "#A0AEC0",
+                fontSize: 13,
+                padding: 8,
+              }}
+            >
+              ← Back
+            </button>
+          )}
           <RevisitChoiceScreen
             reflectionId={reflectionId}
             onReadNow={() => setUserChoseReadNow(true)}
@@ -107,7 +117,7 @@ function MirrorStepBlock({
           }}
         >
           <AnimatePresence mode="wait">
-            {error ? (
+            {error && !error.crisis ? (
               <div
                 style={{
                   display: "flex",
@@ -121,7 +131,9 @@ function MirrorStepBlock({
                 }}
               >
                 <p style={{ color: "rgba(255,255,255,0.7)", fontSize: "14px" }}>
-                  Something went wrong loading your mirror.
+                  {error.timeout
+                    ? "This is taking longer than usual."
+                    : "Something went wrong loading your mirror."}
                 </p>
                 <button
                   type="button"
@@ -154,6 +166,9 @@ function MirrorStepBlock({
                   onOpen={() => {
                     if (mirrorReport) setMirrorOpened(true);
                   }}
+                  isSlow={isSlow}
+                  onRetry={retry}
+                  error={error}
                 />
               </motion.div>
             ) : (
@@ -177,12 +192,28 @@ function MirrorStepBlock({
   );
 }
 
+const CrisisFooter = () => (
+  <div style={{ textAlign: "center", padding: "12px 0" }}>
+    <a
+      href="tel:988"
+      style={{
+        fontSize: 11,
+        color: "#A0AEC0",
+        textDecoration: "none",
+      }}
+    >
+      In crisis? Text 988
+    </a>
+  </div>
+);
+
 const ReflectionFlow = ({
   apiBase,
   accessToken,
   sections,
   originalThought,
   reflectionId,
+  flowMode = "standard",
   onGetPersonalizedMirror,
   onFetchMoodSuggestions,
   onMoodSubmit,
@@ -196,12 +227,53 @@ const ReflectionFlow = ({
   onRetrySave,
   onReflectionComplete,
 }) => {
+  const STEPS = useMemo(() => {
+    if (flowMode === "direct") {
+      return {
+        JOURNEY: 0,
+        MIRROR: 1,
+        MOOD: 2,
+        CLOSING: 3,
+      };
+    }
+    return {
+      JOURNEY: 0,
+      QUESTIONS: 1,
+      MIRROR: 2,
+      MOOD: 3,
+      CLOSING: 4,
+    };
+  }, [flowMode]);
+
+  const STEP_LABELS = flowMode === "direct"
+    ? ["Begin", "Sit", "Notice", "Carry"]
+    : ["Begin", "Write", "Sit", "Notice", "Carry"];
+
+  const STEP_SUBTEXT = flowMode === "direct"
+    ? [
+        "A gentle landing before we start.",
+        "The mirror is ready. No questions needed today.",
+        "Name the feel of this moment.",
+        "Take a breath before you go.",
+      ]
+    : [
+        "A gentle landing before we start.",
+        flowMode === "deep"
+          ? "One thing before the mirror."
+          : "Put words to what's here.",
+        "Let the reflection meet you.",
+        "Name the feel of this moment.",
+        "Take a breath before you go.",
+      ];
+
   const [currentStep, setCurrentStep] = useState(STEPS.JOURNEY);
+  const [showCrisis, setShowCrisis] = useState(false);
   const [personalizedMirror, setPersonalizedMirror] = useState(null);
   const [questionResponses, setQuestionResponses] = useState([]);
   const questionResponsesRef = useRef([]);
   const [closingText, setClosingText] = useState(null);
   const [isLoadingClosing, setIsLoadingClosing] = useState(false);
+  const [isSlowClosing, setIsSlowClosing] = useState(false);
   /** 'come_back' | 'remind' | null – used to skip mark-opened and send revisit_type when saving */
   const [userChoseRevisitType, setUserChoseRevisitType] = useState(null);
   const [lastMoodWord, setLastMoodWord] = useState(null);
@@ -235,7 +307,12 @@ const ReflectionFlow = ({
   const questions = parseQuestions(questionsSection.content);
 
   const handleJourneyComplete = () => {
-    setCurrentStep(STEPS.QUESTIONS);
+    if (flowMode === "direct") {
+      setMirrorReportEnabled(true);
+      setCurrentStep(STEPS.MIRROR);
+    } else {
+      setCurrentStep(STEPS.QUESTIONS);
+    }
   };
 
   const handleQuestionsComplete = (responses) => {
@@ -269,13 +346,17 @@ const ReflectionFlow = ({
       const answers = Array.isArray(questionResponses)
         ? questionResponses.map((r) => ({ question: r?.question ?? "", response: r?.response ?? "" }))
         : [];
-      
-      onGetClosing(moodWord || null, answers, personalizedMirror).then((closing) => {
-        if (closing) setClosingText(closing);
-        setIsLoadingClosing(false);
-      }).catch(() => {
-        setIsLoadingClosing(false);
-      });
+
+      onGetClosing(moodWord || null, answers, personalizedMirror, { onSlow: () => setIsSlowClosing(true) })
+        .then((closing) => {
+          if (closing) setClosingText(closing);
+          setIsLoadingClosing(false);
+          setIsSlowClosing(false);
+        })
+        .catch(() => {
+          setIsLoadingClosing(false);
+          setIsSlowClosing(false);
+        });
     } else {
       setIsLoadingClosing(false);
     }
@@ -310,6 +391,17 @@ const ReflectionFlow = ({
   useEffect(() => {
     window.scrollTo({ top: 0, left: 0, behavior: "smooth" });
   }, [currentStep]);
+
+  if (showCrisis) {
+    return (
+      <CrisisScreen
+        onContinue={() => {
+          setShowCrisis(false);
+          if (onStartFresh) onStartFresh();
+        }}
+      />
+    );
+  }
 
   return (
     <motion.div
@@ -380,7 +472,11 @@ const ReflectionFlow = ({
           {currentStep === STEPS.QUESTIONS && (
             <InteractiveQuestions
               key="questions"
-              questions={questions}
+              questions={
+                flowMode === "deep"
+                  ? [questions[2] ?? questions[questions.length - 1]]
+                  : questions
+              }
               onComplete={handleQuestionsComplete}
               onBack={handleBackToJourney}
             />
@@ -400,6 +496,12 @@ const ReflectionFlow = ({
               onMirrorSlidesComplete={handleMirrorSlidesComplete}
               onComeBackLater={handleComeBackLaterThenMood}
               onSetReminder={handleSetReminderThenMood}
+              onCrisis={() => setShowCrisis(true)}
+              onBack={
+                flowMode === "direct"
+                  ? () => setCurrentStep(STEPS.JOURNEY)
+                  : () => setCurrentStep(STEPS.QUESTIONS)
+              }
             />
           )}
 
@@ -423,6 +525,7 @@ const ReflectionFlow = ({
                 key="closing"
                 closingText={closingText}
                 isLoading={isLoadingClosing}
+                isSlowClosing={isSlowClosing}
                 onDone={() => {
                   if (onReflectionComplete && originalThought && personalizedMirror != null) {
                     onReflectionComplete({
@@ -472,6 +575,8 @@ const ReflectionFlow = ({
           )}
         </AnimatePresence>
       </div>
+
+      <CrisisFooter />
     </motion.div>
   );
 };

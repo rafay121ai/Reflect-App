@@ -71,6 +71,9 @@ export default function PaywallLimitModal({ onUpgrade, onDismiss }) {
           <h2 className="text-lg font-medium text-[#4A5568] mb-2">
             Reflection limit reached
           </h2>
+          <p className="text-[13px] text-[#718096] text-center" style={{ marginBottom: 16 }}>
+            Unlimited reflections + your full pattern over time.
+          </p>
           <p className="text-sm text-[#64748B] mb-6">
             You've used your free reflections for now. Upgrade to Premium for more daily reflections and to unlock the full experience.
           </p>

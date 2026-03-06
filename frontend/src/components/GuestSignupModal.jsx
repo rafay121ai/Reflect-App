@@ -4,14 +4,14 @@ import { useAuth } from "../contexts/AuthContext";
 const STAGE_COPY = {
   soft: {
     title: "You just made space for something real.",
-    body: "This thought deserves to live somewhere safe. Sign up free — it takes seconds, and your first 7 days are on us.",
+    body: "This thought deserves to live somewhere safe. Sign up free — it takes seconds, and your first 14 days are on us.",
     primaryLabel: "Keep this reflection",
     secondaryLabel: "Not yet",
     note: null,
   },
   firm: {
     title: "Two thoughts. Both worth keeping.",
-    body: "You've come back twice — that means something. Sign up free and both reflections move with you, along with 7 days of everything.",
+    body: "You've come back twice — that means something. Sign up free and both reflections move with you, along with 14 days of everything.",
     primaryLabel: "Save both and continue",
     secondaryLabel: "Skip for now",
     note: "After this, a free account is needed to continue.",
@@ -62,6 +62,15 @@ export default function GuestSignupModal({ stage, onSkip }) {
               </p>
             )}
           </div>
+
+          {stage === "hard_block" && (
+            <p
+              className="text-center"
+              style={{ fontSize: 13, color: "#718096", marginBottom: 16 }}
+            >
+              Sign in to unlock your full mirror and keep your reflections over time. Free for 14 days.
+            </p>
+          )}
 
           <div className="flex flex-col gap-3 mt-3">
             <button

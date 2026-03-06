@@ -7,26 +7,25 @@
 -- No data is modified; only RLS and policies are added.
 -- =============================================================================
 
--- -----------------------------------------------------------------------------
--- 1. reflections (user_id)
+-- 1. reflections (user_id) — cast so it works whether column is UUID or TEXT
 -- -----------------------------------------------------------------------------
 ALTER TABLE reflections ENABLE ROW LEVEL SECURITY;
 
 DROP POLICY IF EXISTS "reflections_select_own" ON reflections;
 CREATE POLICY "reflections_select_own" ON reflections
-  FOR SELECT USING (user_id = auth.uid()::text);
+  FOR SELECT USING ((user_id::text) = (auth.uid()::text));
 
 DROP POLICY IF EXISTS "reflections_insert_own" ON reflections;
 CREATE POLICY "reflections_insert_own" ON reflections
-  FOR INSERT WITH CHECK (user_id = auth.uid()::text);
+  FOR INSERT WITH CHECK ((user_id::text) = (auth.uid()::text));
 
 DROP POLICY IF EXISTS "reflections_update_own" ON reflections;
 CREATE POLICY "reflections_update_own" ON reflections
-  FOR UPDATE USING (user_id = auth.uid()::text);
+  FOR UPDATE USING ((user_id::text) = (auth.uid()::text));
 
 DROP POLICY IF EXISTS "reflections_delete_own" ON reflections;
 CREATE POLICY "reflections_delete_own" ON reflections
-  FOR DELETE USING (user_id = auth.uid()::text);
+  FOR DELETE USING ((user_id::text) = (auth.uid()::text));
 
 -- -----------------------------------------------------------------------------
 -- 2. mood_checkins (linked via reflection_id → reflections.user_id)
@@ -38,7 +37,7 @@ CREATE POLICY "mood_checkins_select_own" ON mood_checkins
   FOR SELECT USING (
     EXISTS (
       SELECT 1 FROM reflections r
-      WHERE r.id = mood_checkins.reflection_id AND r.user_id = auth.uid()::text
+      WHERE r.id = mood_checkins.reflection_id AND (r.user_id::text) = (auth.uid()::text)
     )
   );
 
@@ -47,7 +46,7 @@ CREATE POLICY "mood_checkins_insert_own" ON mood_checkins
   FOR INSERT WITH CHECK (
     EXISTS (
       SELECT 1 FROM reflections r
-      WHERE r.id = mood_checkins.reflection_id AND r.user_id = auth.uid()::text
+      WHERE r.id = mood_checkins.reflection_id AND (r.user_id::text) = (auth.uid()::text)
     )
   );
 
@@ -56,7 +55,7 @@ CREATE POLICY "mood_checkins_update_own" ON mood_checkins
   FOR UPDATE USING (
     EXISTS (
       SELECT 1 FROM reflections r
-      WHERE r.id = mood_checkins.reflection_id AND r.user_id = auth.uid()::text
+      WHERE r.id = mood_checkins.reflection_id AND (r.user_id::text) = (auth.uid()::text)
     )
   );
 
@@ -65,7 +64,7 @@ CREATE POLICY "mood_checkins_delete_own" ON mood_checkins
   FOR DELETE USING (
     EXISTS (
       SELECT 1 FROM reflections r
-      WHERE r.id = mood_checkins.reflection_id AND r.user_id = auth.uid()::text
+      WHERE r.id = mood_checkins.reflection_id AND (r.user_id::text) = (auth.uid()::text)
     )
   );
 
@@ -79,7 +78,7 @@ CREATE POLICY "revisit_reminders_select_own" ON revisit_reminders
   FOR SELECT USING (
     EXISTS (
       SELECT 1 FROM reflections r
-      WHERE r.id = revisit_reminders.reflection_id AND r.user_id = auth.uid()::text
+      WHERE r.id = revisit_reminders.reflection_id AND (r.user_id::text) = (auth.uid()::text)
     )
   );
 
@@ -88,7 +87,7 @@ CREATE POLICY "revisit_reminders_insert_own" ON revisit_reminders
   FOR INSERT WITH CHECK (
     EXISTS (
       SELECT 1 FROM reflections r
-      WHERE r.id = revisit_reminders.reflection_id AND r.user_id = auth.uid()::text
+      WHERE r.id = revisit_reminders.reflection_id AND (r.user_id::text) = (auth.uid()::text)
     )
   );
 
@@ -97,7 +96,7 @@ CREATE POLICY "revisit_reminders_update_own" ON revisit_reminders
   FOR UPDATE USING (
     EXISTS (
       SELECT 1 FROM reflections r
-      WHERE r.id = revisit_reminders.reflection_id AND r.user_id = auth.uid()::text
+      WHERE r.id = revisit_reminders.reflection_id AND (r.user_id::text) = (auth.uid()::text)
     )
   );
 
@@ -106,7 +105,7 @@ CREATE POLICY "revisit_reminders_delete_own" ON revisit_reminders
   FOR DELETE USING (
     EXISTS (
       SELECT 1 FROM reflections r
-      WHERE r.id = revisit_reminders.reflection_id AND r.user_id = auth.uid()::text
+      WHERE r.id = revisit_reminders.reflection_id AND (r.user_id::text) = (auth.uid()::text)
     )
   );
 
@@ -120,7 +119,7 @@ CREATE POLICY "reflection_patterns_select_own" ON reflection_patterns
   FOR SELECT USING (
     EXISTS (
       SELECT 1 FROM reflections r
-      WHERE r.pattern_id = reflection_patterns.id AND r.user_id = auth.uid()::text
+      WHERE r.pattern_id = reflection_patterns.id AND (r.user_id::text) = (auth.uid()::text)
     )
   );
 
@@ -134,7 +133,7 @@ CREATE POLICY "reflection_patterns_update_own" ON reflection_patterns
   FOR UPDATE USING (
     EXISTS (
       SELECT 1 FROM reflections r
-      WHERE r.pattern_id = reflection_patterns.id AND r.user_id = auth.uid()::text
+      WHERE r.pattern_id = reflection_patterns.id AND (r.user_id::text) = (auth.uid()::text)
     )
   );
 
@@ -143,7 +142,7 @@ CREATE POLICY "reflection_patterns_delete_own" ON reflection_patterns
   FOR DELETE USING (
     EXISTS (
       SELECT 1 FROM reflections r
-      WHERE r.pattern_id = reflection_patterns.id AND r.user_id = auth.uid()::text
+      WHERE r.pattern_id = reflection_patterns.id AND (r.user_id::text) = (auth.uid()::text)
     )
   );
 
@@ -154,19 +153,19 @@ ALTER TABLE saved_reflections ENABLE ROW LEVEL SECURITY;
 
 DROP POLICY IF EXISTS "saved_reflections_select_own" ON saved_reflections;
 CREATE POLICY "saved_reflections_select_own" ON saved_reflections
-  FOR SELECT USING (user_identifier = auth.uid()::text);
+  FOR SELECT USING ((user_identifier::text) = (auth.uid()::text));
 
 DROP POLICY IF EXISTS "saved_reflections_insert_own" ON saved_reflections;
 CREATE POLICY "saved_reflections_insert_own" ON saved_reflections
-  FOR INSERT WITH CHECK (user_identifier = auth.uid()::text);
+  FOR INSERT WITH CHECK ((user_identifier::text) = (auth.uid()::text));
 
 DROP POLICY IF EXISTS "saved_reflections_update_own" ON saved_reflections;
 CREATE POLICY "saved_reflections_update_own" ON saved_reflections
-  FOR UPDATE USING (user_identifier = auth.uid()::text);
+  FOR UPDATE USING ((user_identifier::text) = (auth.uid()::text));
 
 DROP POLICY IF EXISTS "saved_reflections_delete_own" ON saved_reflections;
 CREATE POLICY "saved_reflections_delete_own" ON saved_reflections
-  FOR DELETE USING (user_identifier = auth.uid()::text);
+  FOR DELETE USING ((user_identifier::text) = (auth.uid()::text));
 
 -- -----------------------------------------------------------------------------
 -- 6. weekly_insights (user_id)
@@ -175,19 +174,19 @@ ALTER TABLE weekly_insights ENABLE ROW LEVEL SECURITY;
 
 DROP POLICY IF EXISTS "weekly_insights_select_own" ON weekly_insights;
 CREATE POLICY "weekly_insights_select_own" ON weekly_insights
-  FOR SELECT USING (user_id = auth.uid()::text);
+  FOR SELECT USING ((user_id::text) = (auth.uid()::text));
 
 DROP POLICY IF EXISTS "weekly_insights_insert_own" ON weekly_insights;
 CREATE POLICY "weekly_insights_insert_own" ON weekly_insights
-  FOR INSERT WITH CHECK (user_id = auth.uid()::text);
+  FOR INSERT WITH CHECK ((user_id::text) = (auth.uid()::text));
 
 DROP POLICY IF EXISTS "weekly_insights_update_own" ON weekly_insights;
 CREATE POLICY "weekly_insights_update_own" ON weekly_insights
-  FOR UPDATE USING (user_id = auth.uid()::text);
+  FOR UPDATE USING ((user_id::text) = (auth.uid()::text));
 
 DROP POLICY IF EXISTS "weekly_insights_delete_own" ON weekly_insights;
 CREATE POLICY "weekly_insights_delete_own" ON weekly_insights
-  FOR DELETE USING (user_id = auth.uid()::text);
+  FOR DELETE USING ((user_id::text) = (auth.uid()::text));
 
 -- -----------------------------------------------------------------------------
 -- 7. user_personalization_context (user_id)
@@ -196,19 +195,19 @@ ALTER TABLE user_personalization_context ENABLE ROW LEVEL SECURITY;
 
 DROP POLICY IF EXISTS "user_personalization_context_select_own" ON user_personalization_context;
 CREATE POLICY "user_personalization_context_select_own" ON user_personalization_context
-  FOR SELECT USING (user_id = auth.uid()::text);
+  FOR SELECT USING ((user_id::text) = (auth.uid()::text));
 
 DROP POLICY IF EXISTS "user_personalization_context_insert_own" ON user_personalization_context;
 CREATE POLICY "user_personalization_context_insert_own" ON user_personalization_context
-  FOR INSERT WITH CHECK (user_id = auth.uid()::text);
+  FOR INSERT WITH CHECK ((user_id::text) = (auth.uid()::text));
 
 DROP POLICY IF EXISTS "user_personalization_context_update_own" ON user_personalization_context;
 CREATE POLICY "user_personalization_context_update_own" ON user_personalization_context
-  FOR UPDATE USING (user_id = auth.uid()::text);
+  FOR UPDATE USING ((user_id::text) = (auth.uid()::text));
 
 DROP POLICY IF EXISTS "user_personalization_context_delete_own" ON user_personalization_context;
 CREATE POLICY "user_personalization_context_delete_own" ON user_personalization_context
-  FOR DELETE USING (user_id = auth.uid()::text);
+  FOR DELETE USING ((user_id::text) = (auth.uid()::text));
 
 -- -----------------------------------------------------------------------------
 -- 8. profiles (user_id)
@@ -217,16 +216,36 @@ ALTER TABLE profiles ENABLE ROW LEVEL SECURITY;
 
 DROP POLICY IF EXISTS "profiles_select_own" ON profiles;
 CREATE POLICY "profiles_select_own" ON profiles
-  FOR SELECT USING (user_id = auth.uid()::text);
+  FOR SELECT USING ((user_id::text) = (auth.uid()::text));
 
 DROP POLICY IF EXISTS "profiles_insert_own" ON profiles;
 CREATE POLICY "profiles_insert_own" ON profiles
-  FOR INSERT WITH CHECK (user_id = auth.uid()::text);
+  FOR INSERT WITH CHECK ((user_id::text) = (auth.uid()::text));
 
 DROP POLICY IF EXISTS "profiles_update_own" ON profiles;
 CREATE POLICY "profiles_update_own" ON profiles
-  FOR UPDATE USING (user_id = auth.uid()::text);
+  FOR UPDATE USING ((user_id::text) = (auth.uid()::text));
 
 DROP POLICY IF EXISTS "profiles_delete_own" ON profiles;
 CREATE POLICY "profiles_delete_own" ON profiles
-  FOR DELETE USING (user_id = auth.uid()::text);
+  FOR DELETE USING ((user_id::text) = (auth.uid()::text));
+
+-- -----------------------------------------------------------------------------
+-- 9. user_usage (user_id UUID) — if table exists (see user_usage_schema.sql)
+-- Backend uses service role for this table; RLS protects anon-key access.
+-- beta_feedback RLS is in backend/beta_feedback_migration.sql.
+-- -----------------------------------------------------------------------------
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'user_usage') THEN
+    ALTER TABLE public.user_usage ENABLE ROW LEVEL SECURITY;
+    DROP POLICY IF EXISTS "user_usage_select_own" ON public.user_usage;
+    CREATE POLICY "user_usage_select_own" ON public.user_usage FOR SELECT USING ((user_id::text) = (auth.uid()::text));
+    DROP POLICY IF EXISTS "user_usage_insert_own" ON public.user_usage;
+    CREATE POLICY "user_usage_insert_own" ON public.user_usage FOR INSERT WITH CHECK ((user_id::text) = (auth.uid()::text));
+    DROP POLICY IF EXISTS "user_usage_update_own" ON public.user_usage;
+    CREATE POLICY "user_usage_update_own" ON public.user_usage FOR UPDATE USING ((user_id::text) = (auth.uid()::text));
+    DROP POLICY IF EXISTS "user_usage_delete_own" ON public.user_usage;
+    CREATE POLICY "user_usage_delete_own" ON public.user_usage FOR DELETE USING ((user_id::text) = (auth.uid()::text));
+  END IF;
+END $$;

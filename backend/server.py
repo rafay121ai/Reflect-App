@@ -15,6 +15,7 @@ REFLECT backend – FastAPI server that uses local Ollama (e.g. Qwen) for reflec
 import json
 import logging
 import os
+import random
 import threading
 import time
 from datetime import datetime, timezone, timedelta
@@ -28,7 +29,7 @@ load_dotenv()  # load .env before other modules read SUPABASE_* etc.
 from fastapi import BackgroundTasks, Depends, FastAPI, Header, HTTPException
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
@@ -39,8 +40,8 @@ from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from auth import require_user_id
 from security import sanitize_for_llm
 
-from llm_provider import get_reflection, get_personalized_mirror, extract_pattern, get_mood_suggestions, get_reminder_message, get_insight_letter, get_closing, convert_moods_to_feelings, llm_chat
-from openai_client import get_mirror_report
+from llm_provider import get_reflection, get_personalized_mirror, extract_pattern, get_mood_suggestions, get_reminder_message, get_insight_letter, get_closing, convert_moods_to_feelings, llm_chat, generate_return_card
+from openai_client import get_mirror_report, contains_crisis_signal
 from pattern_analyzer import analyze_patterns_deep_sync
 from revenuecat_client import get_subscription_status as get_rc_subscription_status
 from usage_limits import enforce_reflection_limit, rollback_reflection_usage
@@ -93,6 +94,10 @@ from supabase_client import (
     insert_beta_feedback,
     list_beta_feedback_for_user,
     save_mirror_report,
+    update_reflection_return_card,
+    get_return_card_for_user,
+    count_reflections_for_user,
+    get_reflections_for_return_card,
 )
 
 # So Supabase and Ollama client warnings/errors show in the uvicorn terminal
@@ -112,6 +117,25 @@ if SENTRY_DSN:
         traces_sample_rate=0.1,
         send_default_pii=False,
     )
+
+def get_rate_limit_key(request: Request) -> str:
+    """Extract user_id from JWT for per-user rate limiting; fall back to IP."""
+    try:
+        auth = request.headers.get("Authorization", "")
+        if auth.startswith("Bearer "):
+            token = auth.split(" ", 1)[1]
+            import jwt
+            payload = jwt.decode(token, options={"verify_signature": False})
+            user_id = payload.get("sub")
+            if user_id:
+                return f"user:{user_id}"
+    except Exception:
+        pass
+    forwarded = request.headers.get("X-Forwarded-For")
+    if forwarded:
+        return forwarded.split(",")[0].strip()
+    return request.client.host if request.client else "unknown"
+
 
 limiter = Limiter(key_func=get_remote_address)
 app.state.limiter = limiter
@@ -137,6 +161,94 @@ def _run_personalization_refresh_all():
         except Exception as e:
             logging.warning("Personalization refresh failed: %s", type(e).__name__)
         time.sleep(interval_sec)
+
+
+def _generate_return_card_background(user_id: str, reflection_id: str):
+    """
+    Background task: generate a return card after the closing is saved.
+    Picks different inputs based on total reflection count.
+    """
+    try:
+        data = get_reflections_for_return_card(user_id)
+        total = data.get("total_count", 0)
+        reflections = data.get("reflections", [])
+        mood_map = data.get("mood_map", {})
+
+        if total < 1 or not reflections:
+            return
+
+        current = next((r for r in reflections if r.get("id") == reflection_id), None)
+        if not current:
+            current = reflections[0] if reflections else None
+
+        def _extract_shaped_by(ref):
+            mr = ref.get("mirror_report")
+            if isinstance(mr, dict):
+                return mr.get("shaped_by", "")
+            return ""
+
+        def _extract_archetype_name(ref):
+            mr = ref.get("mirror_report")
+            if isinstance(mr, dict):
+                arch = mr.get("archetype")
+                if isinstance(arch, dict):
+                    return arch.get("name", "")
+            return ""
+
+        context_parts = []
+
+        if total == 1:
+            shaped_by = _extract_shaped_by(current) if current else ""
+            archetype = _extract_archetype_name(current) if current else ""
+            if shaped_by:
+                context_parts.append(f"What shaped them: {shaped_by}")
+            if archetype:
+                context_parts.append(f"Archetype: {archetype}")
+
+        elif total == 2:
+            for i, ref in enumerate(reflections[:2]):
+                sb = _extract_shaped_by(ref)
+                if sb:
+                    context_parts.append(f"Reflection {i+1} — what shaped them: {sb}")
+            all_moods = [mood_map.get(r.get("id", ""), "") for r in reflections[:2]]
+            all_moods = [m for m in all_moods if m]
+            if all_moods:
+                context_parts.append(f"Mood words: {', '.join(all_moods)}")
+
+        elif total >= 4:
+            longest = max(reflections, key=lambda r: len((r.get("thought") or "")))
+            longest_thought = (longest.get("thought") or "")[:500]
+            current_shaped = _extract_shaped_by(current) if current else ""
+            if longest_thought:
+                context_parts.append(f"Their most invested reflection: \"{longest_thought}\"")
+            if current_shaped:
+                context_parts.append(f"Current reflection — what shaped them: {current_shaped}")
+
+        else:
+            shaped_by = _extract_shaped_by(current) if current else ""
+            archetype = _extract_archetype_name(current) if current else ""
+            if shaped_by:
+                context_parts.append(f"What shaped them: {shaped_by}")
+            if archetype:
+                context_parts.append(f"Archetype: {archetype}")
+
+        if not context_parts:
+            return
+
+        context = "\n".join(context_parts)
+        card_text = generate_return_card(context)
+        if card_text:
+            update_reflection_return_card(reflection_id, card_text)
+            logger.info("return_card_generated user=%s reflection=%s", user_id[:8] + "...", reflection_id)
+            # Schedule a reminder 18 hours from now with the card's first line as the notification body
+            try:
+                remind_at = (datetime.now(timezone.utc) + timedelta(hours=18)).isoformat()
+                first_line = card_text.split("\n")[0].strip()[:80]
+                insert_revisit_reminder(reflection_id, remind_at, first_line)
+            except Exception as re:
+                logger.warning("Return card reminder scheduling failed: %s", type(re).__name__)
+    except Exception as e:
+        logger.warning("Return card background task failed: %s", type(e).__name__)
 
 
 def _server_error(e: Exception, context: str = "") -> HTTPException:
@@ -266,17 +378,49 @@ class ReflectRequest(BaseModel):
 
 class MirrorRequest(BaseModel):
     thought: str = Field(..., max_length=5000)
-    questions: list[str] = Field(..., max_length=20)
-    answers: dict | list
+    questions: list[str] = Field(default=[], max_length=10)
+    answers: list[str] = Field(default=[], max_length=10)
     reflection_id: str | None = Field(default=None, max_length=100)
+
+    @field_validator("questions")
+    @classmethod
+    def validate_questions(cls, v: list[str]) -> list[str]:
+        for q in v:
+            if len(q) > 500:
+                raise ValueError("Each question must be under 500 characters")
+        return [q.strip() for q in v]
+
+    @field_validator("answers")
+    @classmethod
+    def validate_answers(cls, v: list[str]) -> list[str]:
+        for a in v:
+            if len(a) > 2000:
+                raise ValueError("Each answer must be under 2000 characters")
+        return [a.strip() for a in v]
 
 
 class MirrorReportRequest(BaseModel):
     thought: str = Field(..., max_length=5000)
-    questions: list[str] = Field(..., max_items=20)
-    answers: list[str] = Field(..., max_items=20)
+    questions: list[str] = Field(default=[], max_length=10)
+    answers: list[str] = Field(default=[], max_length=10)
     reflection_id: str = Field("", max_length=100)
     reflection_mode: str = Field("gentle", max_length=20)
+
+    @field_validator("questions")
+    @classmethod
+    def validate_questions(cls, v: list[str]) -> list[str]:
+        for q in v:
+            if len(q) > 500:
+                raise ValueError("Each question must be under 500 characters")
+        return [q.strip() for q in v]
+
+    @field_validator("answers")
+    @classmethod
+    def validate_answers(cls, v: list[str]) -> list[str]:
+        for a in v:
+            if len(a) > 2000:
+                raise ValueError("Each answer must be under 2000 characters")
+        return [a.strip() for a in v]
 
 
 class MoodRequest(BaseModel):
@@ -298,13 +442,22 @@ class OpenLaterRequest(BaseModel):
 
 
 class ProfileUpdateRequest(BaseModel):
-    display_name: str | None = None
+    display_name: str | None = Field(None, max_length=200)
     preferences: dict | None = None
+
+    @field_validator("preferences")
+    @classmethod
+    def preferences_size_limit(cls, v):
+        if v is not None:
+            import json
+            if len(json.dumps(v, default=str)) > 10000:
+                raise ValueError("preferences payload too large")
+        return v
 
 
 class MoodSuggestRequest(BaseModel):
-    thought: str = ""  # optional; if empty, backend can still use mirror_text
-    mirror_text: str | None = None  # optional; personalized mirror from their Q&A
+    thought: str = Field("", max_length=5000)
+    mirror_text: str | None = Field(None, max_length=5000)
 
 
 class RemindRequest(BaseModel):
@@ -424,7 +577,7 @@ def _llm_error_message(e: Exception) -> str:
 
 def _activate_trial_if_new(user_id: str) -> None:
     """
-    Activate 7-day trial for brand new users. Idempotent.
+    Activate 14-day trial for brand new users. Idempotent.
     Also syncs profiles.plan_type to 'trial'.
     """
     try:
@@ -440,10 +593,52 @@ def _activate_trial_if_new(user_id: str) -> None:
         logger.warning("_activate_trial_if_new failed: %s", type(e).__name__)
 
 
+def get_flow_mode(total_reflections: int, thought_length: int) -> str:
+    """Determine flow mode for reflection session based on user history and thought length."""
+    # Short thoughts always get questions — mirror needs the Q&A context
+    if thought_length < 50:
+        return "standard"
+
+    # Sessions 1-2: always standard, no variation yet
+    if total_reflections < 3:
+        return "standard"
+
+    # Roll first — 65% chance of standard regardless
+    # Variation should feel like a surprise, not a pattern
+    roll = random.random()
+    if roll < 0.65:
+        return "standard"
+
+    # Remaining 35% — vary based on session depth
+    # Sessions 3-4: deep only, never direct
+    if total_reflections < 5:
+        return "deep"
+
+    # Sessions 5-9: deep only, not direct yet
+    if total_reflections < 10:
+        return "deep"
+
+    # Sessions 10+: split remaining 35% between
+    # deep (20%) and direct (15%)
+    # roll is already between 0.65 and 1.0 here
+    if thought_length >= 150:
+        if roll < 0.85:   # 0.65–0.85 = 20% of total
+            return "deep"
+        else:             # 0.85–1.00 = 15% of total
+            return "direct"
+    else:
+        # Thought not long enough for direct —
+        # give full 35% to deep
+        return "deep"
+
+
 def _do_reflect(body: ReflectRequest, user_id: str | None = None, background_tasks: BackgroundTasks | None = None):
     """Shared logic for POST /api/reflect (with or without trailing slash)."""
     if not (body.thought or "").strip():
         raise HTTPException(status_code=400, detail="thought is required")
+
+    if contains_crisis_signal(body.thought):
+        return {"crisis": True, "sections": []}
 
     # Server-side rate limit by subscription tier (JWT user_id only; no trust of frontend)
     if user_id:
@@ -502,9 +697,13 @@ def _do_reflect(body: ReflectRequest, user_id: str | None = None, background_tas
                 "reflect_success user=%s reflection_id=%s",
                 user_id[:8] + "...", reflection_id,
             )
-        else:
-            logger.info("reflect_success_guest guest_id=anon")
-        return {"id": reflection_id, "sections": sections}
+
+        # Count user's existing reflections (includes this one)
+        existing_count = count_reflections_for_user(user_id) if user_id else 0
+        thought_word_count = len(thought.strip().split())
+        flow_mode = get_flow_mode(existing_count, thought_word_count)
+
+        return {"id": reflection_id, "sections": sections, "flow_mode": flow_mode}
     except HTTPException:
         raise
     except Exception as e:
@@ -530,7 +729,7 @@ def reflect_get():
 
 @app.post("/api/reflect")
 @app.post("/api/reflect/")
-@limiter.limit("20/hour")
+@limiter.limit("10/hour", key_func=get_rate_limit_key)
 def reflect(request: Request, body: ReflectRequest, background_tasks: BackgroundTasks, user_id: str = Depends(require_user_id)):
     return _do_reflect(body, user_id=user_id, background_tasks=background_tasks)
 
@@ -615,8 +814,7 @@ async def webhook_lemon_squeezy(
 
 
 @app.post("/api/reflect/guest")
-@limiter.limit("5/minute")
-@limiter.limit("30/day")
+@limiter.limit("3/hour")
 def reflect_guest(request: Request, body: ReflectRequest, background_tasks: BackgroundTasks):
     """
     Guest reflection endpoint: no auth, no per-user limits. Uses the same LLM flow
@@ -695,10 +893,12 @@ def migrate_guest_reflections(request: Request, body: MigrateGuestRequest, user_
 
 
 @app.post("/api/mirror/personalized")
-@limiter.limit("20/hour")
+@limiter.limit("20/hour", key_func=get_rate_limit_key)
 def mirror_personalized(request: Request, body: MirrorRequest, user_id: str = Depends(require_user_id)):
     if not (body.thought or "").strip():
         raise HTTPException(status_code=400, detail="thought is required")
+    if contains_crisis_signal(body.thought):
+        return {"crisis": True, "content": ""}
     user_context = get_personalization_context(user_id) or {}
     pattern_history_data = get_pattern_history_for_user(user_id, 5) or []
     if body.reflection_id:
@@ -715,11 +915,11 @@ def mirror_personalized(request: Request, body: MirrorRequest, user_id: str = De
             update_reflection(body.reflection_id, questions, answers, content)
         return {"content": content}
     except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Ollama error: {e}")
+        raise _server_error(e, "mirror/personalized")
 
 
 @app.post("/api/mirror/report")
-@limiter.limit("20/hour")
+@limiter.limit("10/hour", key_func=get_rate_limit_key)
 def mirror_report(
     request: Request,
     body: MirrorReportRequest,
@@ -733,6 +933,9 @@ def mirror_report(
     thought = (body.thought or "").strip()
     if not thought:
         raise HTTPException(status_code=400, detail="Thought is required")
+
+    if contains_crisis_signal(thought):
+        return {"crisis": True, "sections": [], "content": "", "closing_text": ""}
 
     safe_thought = sanitize_for_llm(thought)
 
@@ -807,7 +1010,7 @@ def mirror_report(
 
 
 @app.post("/api/mirror/report/guest")
-@limiter.limit("3/minute")
+@limiter.limit("3/hour")
 def mirror_report_guest(
     request: Request,
     body: MirrorReportRequest,
@@ -820,6 +1023,9 @@ def mirror_report_guest(
     thought = (body.thought or "").strip()
     if not thought:
         raise HTTPException(status_code=400, detail="Thought is required")
+
+    if contains_crisis_signal(thought):
+        return {"crisis": True, "sections": [], "content": "", "closing_text": ""}
 
     safe_thought = sanitize_for_llm(thought)
 
@@ -841,6 +1047,8 @@ def mirror_report_guest(
 def mirror_personalized_guest(request: Request, body: MirrorRequest):
     if not (body.thought or "").strip():
         raise HTTPException(status_code=400, detail="thought is required")
+    if contains_crisis_signal(body.thought):
+        return {"crisis": True, "content": ""}
     try:
         thought = body.thought.strip()
         safe_thought = sanitize_for_llm(thought)
@@ -849,17 +1057,19 @@ def mirror_personalized_guest(request: Request, body: MirrorRequest):
         content = get_personalized_mirror(safe_thought, questions, answers, user_context={})
         return {"content": content}
     except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Ollama error: {e}")
+        raise _server_error(e, "mirror/personalized/guest")
 
 
 @app.post("/api/closing")
-@limiter.limit("20/hour")
-def closing(request: Request, body: ClosingRequest, user_id: str = Depends(require_user_id)):
+@limiter.limit("20/hour", key_func=get_rate_limit_key)
+def closing(request: Request, body: ClosingRequest, background_tasks: BackgroundTasks, user_id: str = Depends(require_user_id)):
     """Generate closing moment with named truth + open thread. Updates reflection with closing_text if reflection_id provided."""
     if not (body.thought or "").strip():
         raise HTTPException(status_code=400, detail="thought is required")
     if not (body.mirror_response or "").strip():
         raise HTTPException(status_code=400, detail="mirror_response is required")
+    if contains_crisis_signal(body.thought):
+        return {"crisis": True, "sections": [], "content": "", "closing_text": ""}
     user_context = get_personalization_context(user_id) or {}
     pattern_history_data = get_pattern_history_for_user(user_id, 5) or []
     # Log whether pattern/personalization is being used (for closing)
@@ -904,11 +1114,13 @@ def closing(request: Request, body: ClosingRequest, user_id: str = Depends(requi
         
         if body.reflection_id:
             update_reflection_closing(body.reflection_id, closing_text)
+            background_tasks.add_task(
+                _generate_return_card_background, user_id, body.reflection_id
+            )
         
         return {"closing_text": closing_text}
     except Exception as e:
-        logging.exception("Closing generation failed: %s", type(e).__name__)
-        raise HTTPException(status_code=502, detail=f"Closing generation error: {e}")
+        raise _server_error(e, "closing")
 
 
 @app.post("/api/closing/guest")
@@ -919,6 +1131,8 @@ def closing_guest(request: Request, body: ClosingRequest):
         raise HTTPException(status_code=400, detail="thought is required")
     if not (body.mirror_response or "").strip():
         raise HTTPException(status_code=400, detail="mirror_response is required")
+    if contains_crisis_signal(body.thought):
+        return {"crisis": True, "sections": [], "content": "", "closing_text": ""}
     try:
         thought = body.thought.strip()
         safe_thought = sanitize_for_llm(thought)
@@ -937,8 +1151,7 @@ def closing_guest(request: Request, body: ClosingRequest):
         )
         return {"closing_text": closing_text}
     except Exception as e:
-        logging.exception("Closing generation failed: %s", type(e).__name__)
-        raise HTTPException(status_code=502, detail=f"Closing generation error: {e}")
+        raise _server_error(e, "closing/guest")
 
 
 @app.post("/api/remind")
@@ -1002,7 +1215,7 @@ def mood_suggest(request: Request, body: MoodSuggestRequest, user_id: str = Depe
         suggestions = get_mood_suggestions(thought, mirror_text)
         return {"suggestions": suggestions}
     except Exception as e:
-        raise HTTPException(status_code=502, detail=str(e))
+        raise _server_error(e, "mood/suggest")
 
 
 @app.post("/api/mood/suggest/guest")
@@ -1015,11 +1228,11 @@ def mood_suggest_guest(request: Request, body: MoodSuggestRequest):
         suggestions = get_mood_suggestions(thought, mirror_text)
         return {"suggestions": suggestions}
     except Exception as e:
-        raise HTTPException(status_code=502, detail=str(e))
+        raise _server_error(e, "mood/suggest/guest")
 
 
 @app.post("/api/mood")
-@limiter.limit("30/hour")
+@limiter.limit("30/hour", key_func=get_rate_limit_key)
 def mood(request: Request, body: MoodRequest, user_id: str = Depends(require_user_id)):
     """Store a mood check-in: word/phrase, optional description, linked to reflection. No scores, no labels."""
     if not (body.word_or_phrase or "").strip():
@@ -1188,9 +1401,10 @@ def usage_get(user_id: str = Depends(require_user_id)):
     """
     Return current usage/plan state for this user.
     plan_type: 'trial' | 'monthly' | 'yearly'
-    trial_expires_at: trial_start + 7 days (ISO) for trial users.
+    trial_expires_at: trial_start + 14 days (ISO) for trial users.
     """
     from datetime import timedelta
+    from usage_limits import TRIAL_DAYS
 
     row = get_user_usage(user_id) or {}
     plan_type = (row.get("plan_type") or "trial").strip().lower()
@@ -1211,7 +1425,7 @@ def usage_get(user_id: str = Depends(require_user_id)):
             if ts.tzinfo is None:
                 ts = ts.replace(tzinfo=timezone.utc)
             trial_start_iso = ts.isoformat()
-            expires = ts + timedelta(days=7)
+            expires = ts + timedelta(days=TRIAL_DAYS)
             trial_expires_at = expires.isoformat()
             now = datetime.now(timezone.utc)
             is_expired = now >= expires
@@ -1252,8 +1466,33 @@ def user_reflected_today(user_id: str = Depends(require_user_id)):
     return {"reflected_today": len(items) > 0}
 
 
+@app.get("/api/user/return-card")
+def user_return_card(user_id: str = Depends(require_user_id)):
+    """
+    Get the most recent unseen return card for this user.
+    Returns {has_card, card_text, reflection_id, reflection_date, total_reflections}.
+    The frontend tracks seen cards via localStorage.
+    """
+    total = count_reflections_for_user(user_id)
+    if total < 2:
+        return {"has_card": False}
+
+    card_row = get_return_card_for_user(user_id)
+    if not card_row or not card_row.get("return_card"):
+        return {"has_card": False}
+
+    return {
+        "has_card": True,
+        "card_text": card_row["return_card"],
+        "reflection_id": card_row["id"],
+        "reflection_date": card_row.get("created_at", ""),
+        "total_reflections": total,
+    }
+
+
 @app.delete("/api/user/account")
-def user_account_delete(user_id: str = Depends(require_user_id)):
+@limiter.limit("3/day", key_func=get_rate_limit_key)
+def user_account_delete(request: Request, user_id: str = Depends(require_user_id)):
     """Permanently delete all user data and the auth account (GDPR-style account deletion). Irreversible."""
     ok = delete_user_data(user_id, delete_auth_user=True)
     if not ok:
@@ -1411,7 +1650,8 @@ def _build_reflections_summary(reflections: list[dict], max_items: int = 20) -> 
 
 
 @app.get("/api/insights/letter")
-def insights_letter(user_id: str = Depends(require_user_id)):
+@limiter.limit("5/hour", key_func=get_rate_limit_key)
+def insights_letter(request: Request, user_id: str = Depends(require_user_id)):
     """
     Personal insight letter ("A letter to you:"). 
     - Letter generates only after a 5-day period is complete
@@ -1510,13 +1750,15 @@ def insights_letter(user_id: str = Depends(require_user_id)):
 
 # Keep /api/insights/weekly as alias for backwards compatibility
 @app.get("/api/insights/weekly")
-def insights_weekly(user_id: str = Depends(require_user_id)):
+@limiter.limit("5/hour", key_func=get_rate_limit_key)
+def insights_weekly(request: Request, user_id: str = Depends(require_user_id)):
     """Alias for /api/insights/letter for backwards compatibility."""
-    return insights_letter(user_id)
+    return insights_letter(request, user_id)
 
 
 @app.post("/api/insights/generate-letter")
-def insights_generate_letter(user_id: str = Depends(require_user_id)):
+@limiter.limit("2/hour", key_func=get_rate_limit_key)
+def insights_generate_letter(request: Request, user_id: str = Depends(require_user_id)):
     """
     Force regenerate insight letter for the last completed period.
     """

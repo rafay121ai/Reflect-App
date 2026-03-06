@@ -13,7 +13,7 @@ function isNative() {
   }
 }
 
-export default function TrialExpiredModal({ onFallbackSettings }) {
+export default function TrialExpiredModal({ onFallbackSettings, onDismiss }) {
   const { user, session } = useAuth();
   const variants = getLemonVariants();
 
@@ -63,12 +63,52 @@ export default function TrialExpiredModal({ onFallbackSettings }) {
             </p>
           </div>
 
+          <p
+            style={{
+              fontFamily: "'Fraunces', serif",
+              fontSize: 16,
+              color: "#2d3748",
+              textAlign: "center",
+              marginBottom: 16,
+              marginTop: 0,
+            }}
+          >
+            Everything you've experienced — unlimited, and getting smarter each session.
+          </p>
+          <ul className="list-none space-y-1.5 text-left mx-auto" style={{ maxWidth: "280px" }}>
+            <li className="text-sm text-[#718096] flex items-start gap-2">
+              <span className="text-[#FFB4A9] shrink-0">•</span>
+              <span>Unlimited reflections</span>
+            </li>
+            <li className="text-sm text-[#718096] flex items-start gap-2">
+              <span className="text-[#FFB4A9] shrink-0">•</span>
+              <span>Your full mirror report every session</span>
+            </li>
+            <li className="text-sm text-[#718096] flex items-start gap-2">
+              <span className="text-[#FFB4A9] shrink-0">•</span>
+              <span>Patterns and insights that deepen over time</span>
+            </li>
+          </ul>
+
           <button
             type="button"
             onClick={handleSeePlans}
             className="w-full py-3 rounded-full text-sm font-medium text-[#0F172A] bg-white hover:bg-[#E5E7EB] transition-colors"
           >
             Choose a plan
+          </button>
+
+          <button
+            type="button"
+            onClick={() => {
+              const tomorrow = new Date();
+              tomorrow.setDate(tomorrow.getDate() + 1);
+              try { localStorage.setItem("reflect_trial_modal_snoozed", tomorrow.toISOString()); } catch {}
+              onDismiss?.();
+            }}
+            style={{ background: "transparent", color: "#A0AEC0", fontSize: 13, border: "none", cursor: "pointer", width: "100%", padding: "8px 0" }}
+          >
+            Remind me in 24 hours
           </button>
 
           <p className="text-[10px] text-[#9CA3AF] text-center mt-1">

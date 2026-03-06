@@ -6,6 +6,8 @@ import json
 import logging
 import os
 import re
+import time
+
 import httpx
 
 from ollama_client import (
@@ -22,8 +24,11 @@ OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "").strip()
 OPENROUTER_MODEL = os.getenv("OPENROUTER_MODEL", "openai/gpt-4.1-mini").strip() or "openai/gpt-4.1-mini"
 
 
-def _chat(prompt: str, system: str | None = None) -> str:
-    """Send a prompt to OpenRouter and return the assistant message content."""
+def _chat(prompt: str, system: str | None = None, max_retries: int = 2, max_tokens: int = 800) -> str:
+    """
+    Send a prompt to OpenRouter with exponential backoff retry.
+    Retries on 429 (rate limit), 500, and 503 (service unavailable).
+    """
     if not OPENROUTER_API_KEY:
         raise ValueError("OPENROUTER_API_KEY is not set")
     messages = []
@@ -31,25 +36,70 @@ def _chat(prompt: str, system: str | None = None) -> str:
         messages.append({"role": "system", "content": system})
     messages.append({"role": "user", "content": prompt})
 
-    with httpx.Client(timeout=120.0) as client:
-        r = client.post(
-            "https://openrouter.ai/api/v1/chat/completions",
-            headers={
-                "Authorization": f"Bearer {OPENROUTER_API_KEY}",
-                "Content-Type": "application/json",
-                "HTTP-Referer": "https://reflect-app.local",
-            },
-            json={
-                "model": OPENROUTER_MODEL,
-                "messages": messages,
-            },
-        )
-        r.raise_for_status()
-        data = r.json()
-        choice = (data.get("choices") or [None])[0]
-        if not choice:
-            return ""
-        return (choice.get("message") or {}).get("content") or ""
+    last_error = None
+    for attempt in range(max_retries + 1):
+        try:
+            with httpx.Client(timeout=120.0) as client:
+                r = client.post(
+                    "https://openrouter.ai/api/v1/chat/completions",
+                    headers={
+                        "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+                        "Content-Type": "application/json",
+                        "HTTP-Referer": "https://reflect-app.local",
+                    },
+                    json={
+                        "model": OPENROUTER_MODEL,
+                        "messages": messages,
+                        "max_tokens": max_tokens,
+                    },
+                )
+
+                if r.status_code in (429, 500, 503) and attempt < max_retries:
+                    wait = (2 ** attempt) + 0.5
+                    logger.warning(
+                        "OpenRouter %s on attempt %d, retrying in %.1fs",
+                        r.status_code,
+                        attempt + 1,
+                        wait,
+                    )
+                    time.sleep(wait)
+                    last_error = r.status_code
+                    continue
+
+                r.raise_for_status()
+                data = r.json()
+                usage = data.get("usage")
+                if usage:
+                    logger.info(
+                        "[tokens] prompt=%s completion=%s total=%s",
+                        usage.get("prompt_tokens"),
+                        usage.get("completion_tokens"),
+                        usage.get("total_tokens"),
+                    )
+                choice = (data.get("choices") or [None])[0]
+                if not choice:
+                    return ""
+                return (choice.get("message") or {}).get("content") or ""
+
+        except httpx.TimeoutException as e:
+            if attempt < max_retries:
+                wait = (2 ** attempt) + 0.5
+                logger.warning(
+                    "OpenRouter timeout on attempt %d, retrying in %.1fs",
+                    attempt + 1,
+                    wait,
+                )
+                time.sleep(wait)
+                last_error = e
+                continue
+            raise
+
+        except Exception as e:
+            raise
+
+    raise Exception(
+        f"OpenRouter failed after {max_retries + 1} attempts. Last error: {last_error}"
+    )
 
 
 # ============================================================================
@@ -341,12 +391,11 @@ MIXED
 Nothing else. No explanation."""
     
     try:
-        result = _chat(prompt, system=system).strip().upper()
-        # Extract just the type word
+        result = _chat(prompt, system=system, max_tokens=10).strip().upper()
         for conv_type in ["PRACTICAL", "EMOTIONAL", "SOCIAL", "MIXED"]:
             if conv_type in result:
                 return conv_type
-        return "MIXED"  # Default fallback
+        return "MIXED"
     except Exception as e:
         logger.warning("Conversation type classification failed: %s", e)
         return "MIXED"
@@ -400,8 +449,7 @@ Rules that don't change regardless of type:
 - The last question should make them pause"""
     
     try:
-        raw = _chat(base_prompt, system=system).strip()
-        # Parse questions from response (they might be numbered or bulleted)
+        raw = _chat(base_prompt, system=system, max_tokens=300).strip()
         questions = []
         lines = raw.split('\n')
         for line in lines:
@@ -561,7 +609,7 @@ CRITICAL: Write the actual reflection content only. No instructions, no examples
 
 OUTPUT FORMAT: You MUST start each section with a line containing exactly ## SectionName (e.g. ## What This Feels Like), then the content on the next lines. Use these exact section headers: ## What This Feels Like, ## Where You're Stuck, ## What You Believe Right Now, ## Why This Matters to You, ## Some Things to Notice, ## A Mirror.'''
 
-    raw = _chat(prompt, system=config["system"])
+    raw = _chat(prompt, system=config["system"], max_tokens=600)
     if not (raw and raw.strip()):
         logger.warning("get_reflection: LLM returned empty response; using fallback sections. Check OPENROUTER_API_KEY and model.")
     sections = _parse_sections(raw)
@@ -695,7 +743,7 @@ What you're NOT writing:
 If you know their recurring themes, go one layer deeper than you would for a stranger.
 Reference the pattern without naming it explicitly. Make them feel genuinely known, not just heard."""
 
-    return _chat(prompt, system=system).strip() or "What you shared matters. Take a moment to be with it."
+    return _chat(prompt, system=system, max_tokens=500).strip() or "What you shared matters. Take a moment to be with it."
 
 
 def get_closing(
@@ -801,7 +849,7 @@ Test before you output:
 - Could this closing have been written for anyone else? If yes, rewrite."""
 
     try:
-        result = _chat(prompt, system=system).strip()
+        result = _chat(prompt, system=system, max_tokens=300).strip()
         if result and len(result) > 0:
             return result
     except Exception as e:
@@ -941,7 +989,7 @@ Return ONLY a JSON array, nothing else:
 [{{"phrase": "...", "description": "..."}}, ...]"""
 
     try:
-        raw = _chat(prompt, system=system).strip()
+        raw = _chat(prompt, system=system, max_tokens=150).strip()
         if not raw:
             return MOOD_SUGGESTIONS_FALLBACK
         if raw.startswith("```"):
@@ -1069,7 +1117,7 @@ Write TO them. Make it specific to THEIR entries, not generic wisdom. No salutat
 Count your words. 100-150 only."""
 
     try:
-        out = _chat(prompt, system=system).strip()
+        out = _chat(prompt, system=system, max_tokens=800).strip()
         lines = out.split('\n')
         if lines and lines[0].strip().lower().startswith(('dear', 'hi ', 'hello', 'hey')):
             out = '\n'.join(lines[1:]).strip()
@@ -1169,6 +1217,45 @@ Return JSON array only:
     except (json.JSONDecodeError, Exception) as e:
         logger.warning("Batch mood conversion failed: %s", e)
     return [{"original": m, "feeling": m} for m in unique_moods]
+
+
+def generate_return_card(context: str) -> str | None:
+    """
+    Generate a return card that connects the user's internal pattern
+    to a real-world anchor (person, study, concept, historical moment).
+    3-4 lines max. Returns the card text or None on failure.
+    """
+    system = """You write 3-4 lines. No more.
+
+You connect this person's internal pattern to something real in the world — a specific person, a named psychological concept, a historical moment, a study, a cultural phenomenon. The anchor must be real and specific. Never invented.
+
+Structure:
+Line 1-2: The real world anchor and what it observed or did.
+Line 3: The connection to this person's exact pattern.
+Line 4: One line that lands on who they are. Slightly uncomfortable. Not consoling.
+
+Rules:
+- The real world anchor must be named specifically — a person's name, a study's finding, a concept's name. Never vague ('some people', 'research shows', 'many find').
+- Never start with 'You'
+- Never summarise what they wrote
+- Never use the words: journey, process, growth, healing, reflect, pattern, cope, navigate
+- The last line must be about who they ARE, not what they should do
+- Plain language. Nothing needs decoding.
+- 3-4 lines total. Hard limit."""
+
+    prompt = f"""Based on this person's reflection data, write a return card.
+
+{context}
+
+Write 3-4 lines only. Connect their specific situation to a real, named anchor from the world — a person, a study, a concept, a moment in history. Make the connection feel inevitable, not forced. The last line should be about who they are."""
+
+    try:
+        result = _chat(prompt, system=system, max_tokens=120).strip()
+        if result and len(result) > 20:
+            return result
+    except Exception as e:
+        logger.warning("Return card generation failed: %s", e)
+    return None
 
 
 def llm_chat(prompt: str, system: str | None = None) -> str:

@@ -65,7 +65,7 @@ const MoodCheckIn = ({
       setIsSubmitted(true);
       onDone?.(wordOrPhrase);
     } catch (err) {
-      console.error("Mood submit error:", err);
+      if (process.env.NODE_ENV !== "production") console.error("Mood submit error:", err);
       setIsSubmitted(true);
       onDone?.(wordOrPhrase);
     } finally {
@@ -167,7 +167,7 @@ const MoodCheckIn = ({
         transition={{ delay: 0.1 }}
         className="text-2xl md:text-3xl text-stone-700 mb-2 text-center"
         style={{ 
-          fontFamily: "'Crimson Pro', serif",
+          fontFamily: "'Fraunces', serif",
           fontWeight: 400,
           letterSpacing: "-0.02em"
         }}
@@ -182,7 +182,7 @@ const MoodCheckIn = ({
         className="text-sm text-stone-400 mb-12 text-center"
         style={{ fontFamily: "'Inter', sans-serif" }}
       >
-        Here are some words you could use.. or ignore.
+        Here are some words you could use… or ignore.
       </motion.p>
 
       {/* Suggestion cards */}
@@ -236,7 +236,7 @@ const MoodCheckIn = ({
                     selected === item.phrase ? "text-stone-900 font-semibold" : "text-stone-700"
                   }`}
                   style={{ 
-                    fontFamily: "'Crimson Pro', serif",
+                    fontFamily: "'Fraunces', serif",
                     fontWeight: 500,
                     letterSpacing: "-0.01em"
                   }}

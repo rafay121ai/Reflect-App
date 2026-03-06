@@ -1,13 +1,20 @@
-import { useState } from "react";
+import { useState, useRef, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 
 /**
  * Frosted glass surface shown before tapping. Shows archetype name barely through frost.
  * On tap — glass clears with ripple, then slides begin.
  */
-export default function MirrorEntry({ archetypeName, isLoading, onOpen }) {
+export default function MirrorEntry({ archetypeName, isLoading, onOpen, isSlow, onRetry, error }) {
   const [tapped, setTapped] = useState(false);
   const [ripple, setRipple] = useState(null);
+  const timeoutRef = useRef(null);
+
+  useEffect(() => {
+    return () => {
+      if (timeoutRef.current) clearTimeout(timeoutRef.current);
+    };
+  }, []);
 
   const handleTap = (e) => {
     if (isLoading || tapped) return;
@@ -19,7 +26,7 @@ export default function MirrorEntry({ archetypeName, isLoading, onOpen }) {
     });
 
     setTapped(true);
-    setTimeout(onOpen, 600);
+    timeoutRef.current = setTimeout(onOpen, 600);
   };
 
   return (
@@ -161,7 +168,7 @@ export default function MirrorEntry({ archetypeName, isLoading, onOpen }) {
                   fontFamily: "inherit",
                 }}
               >
-                reading you
+                {isSlow ? "Still reading you…" : "reading you"}
               </motion.div>
             ) : (
               <>
@@ -218,6 +225,45 @@ export default function MirrorEntry({ archetypeName, isLoading, onOpen }) {
         )}
       </AnimatePresence>
 
+      {/* Slow / timeout message and retry below oval */}
+      {(isLoading && isSlow) || error?.timeout ? (
+        <div
+          style={{
+            display: "flex",
+            flexDirection: "column",
+            alignItems: "center",
+            marginTop: 16,
+            position: "relative",
+            zIndex: 5,
+          }}
+        >
+          <p
+            style={{
+              color: "rgba(255,255,255,0.4)",
+              fontSize: 12,
+              margin: 0,
+            }}
+          >
+            Taking longer than usual.
+          </p>
+          <button
+            type="button"
+            onClick={() => onRetry?.()}
+            style={{
+              color: "white",
+              fontSize: 12,
+              textDecoration: "underline",
+              background: "none",
+              border: "none",
+              cursor: "pointer",
+              marginTop: 8,
+            }}
+          >
+            Try again
+          </button>
+        </div>
+      ) : null}
+
       <AnimatePresence>
         {ripple && (
           <motion.div
@@ -238,6 +284,23 @@ export default function MirrorEntry({ archetypeName, isLoading, onOpen }) {
           />
         )}
       </AnimatePresence>
+
+      <a
+        href="tel:988"
+        style={{
+          position: "absolute",
+          bottom: 16,
+          left: 0,
+          right: 0,
+          textAlign: "center",
+          fontSize: 11,
+          color: "rgba(160,174,192,0.6)",
+          textDecoration: "none",
+          zIndex: 10,
+        }}
+      >
+        In crisis? Text 988
+      </a>
     </div>
   );
 }
