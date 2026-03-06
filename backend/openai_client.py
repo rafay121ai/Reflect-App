@@ -989,6 +989,13 @@ Output format:
             raw = raw[start:end]
         slides = json.loads(raw)
     except Exception as e:
+        logger.warning(
+            "llm_parse_failed model=%s response_len=%s status=%s error=%s",
+            OPENAI_MODEL,
+            len(raw) if raw else 0,
+            getattr(e, "status_code", "n/a"),
+            type(e).__name__,
+        )
         logger.warning("Mirror report generation failed: %s", type(e).__name__)
         slides = {
             "shaped_by": "What you wrote carries more than the situation. It carries a way of being in the world that didn't arrive by accident.",

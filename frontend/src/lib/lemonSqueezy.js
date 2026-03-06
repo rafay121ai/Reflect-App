@@ -1,7 +1,10 @@
 /**
  * Lemon Squeezy checkout for REFLECT web subscriptions.
- * Opens checkout in overlay; on success reloads so backend sees updated plan.
+ * Opens checkout in overlay; on success polls for plan update then reloads.
  */
+
+import { getBackendUrl } from "./config";
+import { getAuthToken } from "./api";
 
 const SCRIPT_URL = "https://app.lemonsqueezy.com/js/lemon.js";
 
@@ -93,10 +96,10 @@ function buildCheckoutUrl(variantId, userEmail, userId) {
 
 /**
  * Open Lemon Squeezy checkout for a variant.
- * @param {{ variantId: string, userId: string, userEmail: string }} opts
+ * @param {{ variantId: string, userId: string, userEmail: string, getAuthToken?: () => string | null, onCheckoutSuccessMessage?: (msg: string) => void }} opts
  * @param {(err?: string) => void} onError - optional callback if checkout open fails
  */
-export async function openCheckout({ variantId, userId, userEmail }, onError) {
+export async function openCheckout({ variantId, userId, userEmail, getAuthToken: getAuthTokenFn, onCheckoutSuccessMessage }, onError) {
   const url = buildCheckoutUrl(variantId, userEmail, userId);
   if (!url) {
     const err = "Checkout is not configured. Set REACT_APP_LS_CHECKOUT_URL (and variant IDs) or REACT_APP_LS_MONTHLY_URL & REACT_APP_LS_YEARLY_URL.";
@@ -109,12 +112,36 @@ export async function openCheckout({ variantId, userId, userEmail }, onError) {
     window.open(url, "_blank");
     return;
   }
+
+  async function waitForPlanUpdate(maxAttempts = 6, intervalMs = 2000) {
+    const getToken = getAuthTokenFn || getAuthToken;
+    const base = getBackendUrl().replace(/\/$/, "");
+    for (let i = 0; i < maxAttempts; i++) {
+      await new Promise((r) => setTimeout(r, intervalMs));
+      try {
+        const res = await fetch(`${base}/api/usage`, {
+          headers: { Authorization: `Bearer ${getToken() || ""}` },
+        });
+        if (res.ok) {
+          const data = await res.json();
+          if (data.plan_type && data.plan_type !== "trial") {
+            return true;
+          }
+        }
+      } catch (_) {}
+    }
+    return false;
+  }
+
   window.LemonSqueezy.Setup({
-    eventHandler: (event) => {
+    eventHandler: async (event) => {
       if (event.event === "Checkout.Success") {
-        setTimeout(() => {
-          window.location.reload();
-        }, 2000);
+        if (onCheckoutSuccessMessage) onCheckoutSuccessMessage("Your mirror is ready. Activating your plan…");
+        const updated = await waitForPlanUpdate();
+        if (!updated && onCheckoutSuccessMessage) {
+          onCheckoutSuccessMessage("Your plan is activating — it may take a moment. Refresh if needed.");
+        }
+        window.location.reload();
       }
     },
   });

@@ -1,4 +1,5 @@
 import { motion, AnimatePresence } from "framer-motion";
+import { toast } from "sonner";
 import { openCheckout, getLemonVariants } from "../lib/lemonSqueezy";
 import { useAuth } from "../contexts/AuthContext";
 
@@ -13,7 +14,7 @@ function isNative() {
 }
 
 export default function TrialExpiredModal({ onFallbackSettings }) {
-  const { user } = useAuth();
+  const { user, session } = useAuth();
   const variants = getLemonVariants();
 
   const handleSeePlans = () => {
@@ -31,6 +32,8 @@ export default function TrialExpiredModal({ onFallbackSettings }) {
         variantId,
         userId: user.id,
         userEmail: user.email || "",
+        getAuthToken: () => session?.access_token ?? null,
+        onCheckoutSuccessMessage: (msg) => toast(msg),
       },
       () => onFallbackSettings?.(),
     );

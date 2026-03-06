@@ -45,6 +45,10 @@ const STATES = {
   VIEWING_SAVED: 'viewing_saved'
 };
 
+const devError = (...args) => {
+  if (process.env.NODE_ENV !== "production") console.error(...args);
+};
+
 function App() {
   const { user, session, loading, signInWithGoogle, error: authError, clearError: clearAuthError } = useAuth();
   const { isSupported: isRevenueCatSupported, presentPaywall, presentPaywallIfNeeded, isPremium } = useRevenueCat();
@@ -74,8 +78,10 @@ function App() {
   const [showTrialBanner, setShowTrialBanner] = useState(false);
   const [showTrialExpiredModal, setShowTrialExpiredModal] = useState(false);
   const [signInModalLoading, setSignInModalLoading] = useState(false);
+  const [saveError, setSaveError] = useState(false);
   const revisitBannerTimeoutRef = useRef(null);
   const dailyNudgeShownThisSession = useRef(false);
+  const savePayloadRef = useRef(null);
   const openReflectionRef = useRef((id) => {
     setViewingReflectionId(id);
     setAppState(STATES.VIEWING_REFLECTION);
@@ -184,6 +190,16 @@ function App() {
     return () => document.removeEventListener("click", onOutside, true);
   }, [historyDropdownOpen]);
 
+  useEffect(() => {
+    const handlePopState = () => {
+      if (thought && reflection && appState === STATES.REFLECTION) {
+        window.history.pushState(null, "", window.location.href);
+      }
+    };
+    window.addEventListener("popstate", handlePopState);
+    return () => window.removeEventListener("popstate", handlePopState);
+  }, [thought, reflection, appState]);
+
   // After sign-in, save any reflection that was pending (from end of first reflection). Intentionally only depend on user so we run once when user becomes available.
   useEffect(() => {
     if (!user || !pendingSaveAfterSignIn) return;
@@ -193,7 +209,7 @@ function App() {
     performSaveHistory(rawText, answers, mirrorResponse, moodWord, user.id, options)
       .then(() => refetchHistory())
       .catch((err) => {
-        console.error("Save after sign-in failed:", err);
+        devError("Save after sign-in failed:", err);
         toast.error("Could not save reflection. Try again from My reflections.");
       });
     // eslint-disable-next-line react-hooks/exhaustive-deps -- run only when user is set; pendingSaveAfterSignIn/refetchHistory are intentionally omitted to avoid re-runs.
@@ -359,7 +375,7 @@ function App() {
       setReflection({ id: response.data.id ?? null, sections: response.data.sections });
       setAppState(STATES.REFLECTION);
     } catch (error) {
-      console.error("Reflection error:", error);
+      devError("Reflection error:", error);
       const isLimitReached = error.response?.status === 429
         && (error.response?.data?.error === "Reflection limit reached" || error.response?.data?.detail === "Reflection limit reached");
       if (isLimitReached) {
@@ -395,7 +411,7 @@ function App() {
       }, config);
       return response.data.content;
     } catch (error) {
-      console.error("Personalized mirror error:", error);
+      devError("Personalized mirror error:", error);
       toast.error("We couldn't load your reflection. Try again.");
       return null;
     }
@@ -411,7 +427,7 @@ function App() {
       }, config);
       return response.data.suggestions ?? [];
     } catch (error) {
-      console.error("Mood suggestions error:", error);
+      devError("Mood suggestions error:", error);
       return [];
     }
   };
@@ -433,7 +449,7 @@ function App() {
       setClosingText(closing);
       return closing;
     } catch (error) {
-      console.error("Closing generation error:", error);
+      devError("Closing generation error:", error);
       toast.error("We couldn't load your reflection. Try again.");
       const fallback = "You showed up today. That matters. Between now and next time — notice what you're already carrying. It's worth your attention.";
       setClosingText(fallback);
@@ -450,12 +466,13 @@ function App() {
         ...(description?.trim() && { description: description.trim() }),
       }, { headers: getAuthHeaders() });
     } catch (error) {
-      console.error("Mood submit error:", error);
+      devError("Mood submit error:", error);
       throw error; // MoodCheckIn will still show done state
     }
   };
 
   const handleReflectAnother = () => {
+    setSaveError(false);
     setAppState(STATES.INPUT);
   };
 
@@ -508,11 +525,14 @@ function App() {
       setShowSignInModal(true);
       return;
     }
+    savePayloadRef.current = { rawText, answers, mirrorResponse, moodWord, options };
     try {
       await performSaveHistory(rawText, answers, mirrorResponse, moodWord, user.id, options);
+      setSaveError(false);
       refetchHistory();
     } catch (err) {
-      console.error("Save history error:", err);
+      devError("Save history error:", err);
+      setSaveError(true);
       if (err.response?.status === 401) {
         toast.error("Session invalid. Sign out and sign in again from Settings, or check backend SUPABASE_JWT_SECRET.");
       } else {
@@ -537,7 +557,7 @@ function App() {
         }
       }
     } catch (error) {
-      console.error("Set reminder error:", error);
+      devError("Set reminder error:", error);
       toast.error("Could not set reminder. Try again later.");
     }
   };
@@ -592,6 +612,7 @@ function App() {
   };
 
   const handleStartFresh = () => {
+    setSaveError(false);
     setThought('');
     setReflection(null);
     setViewingReflectionId(null);
@@ -1015,6 +1036,12 @@ function App() {
               onSetReminder={handleSetReminder}
               onReflectAnother={handleReflectAnother}
               onStartFresh={handleStartFresh}
+              saveError={saveError}
+              onRetrySave={() => {
+                setSaveError(false);
+                const p = savePayloadRef.current;
+                if (p) handleSaveHistory(p.rawText, p.answers, p.mirrorResponse, p.moodWord, p.options);
+              }}
               onReflectionComplete={
                 user
                   ? undefined

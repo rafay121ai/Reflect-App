@@ -1,23 +1,24 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 
 /**
  * Fetches the 4-slide mirror report from POST /api/mirror/report (auth) or /api/mirror/report/guest (guest).
  * Call when user has finished answering questions; report is ready by the time they tap the mirror.
- * Uses a ref guard so the fetch runs only once per reflection, regardless of re-renders.
+ * Exposes error and retry so the UI can show "Try again" on failure.
  */
-export function useMirrorReport({
-  apiBase,
-  thought,
-  questions,
-  answers,
-  reflectionId,
-  accessToken,
-  enabled = false,
-}) {
+export function useMirrorReport(options) {
+  const { enabled, apiBase, thought, questions, answers, reflectionId, accessToken } = options;
   const [report, setReport] = useState(null);
-  const [isLoading, setIsLoading] = useState(false);
+  const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
+  const [retryCount, setRetryCount] = useState(0);
   const hasFetchedRef = useRef(false);
+
+  const retry = useCallback(() => {
+    hasFetchedRef.current = false;
+    setError(null);
+    setReport(null);
+    setRetryCount((c) => c + 1);
+  }, []);
 
   useEffect(() => {
     if (!enabled || hasFetchedRef.current) return;
@@ -27,23 +28,15 @@ export function useMirrorReport({
     if (answersArr.length === 0) return;
 
     hasFetchedRef.current = true;
-
     let cancelled = false;
-    setIsLoading(true);
+    setLoading(true);
     setError(null);
 
     const isGuest = !accessToken;
-    const base = apiBase
-      .replace(/\/$/, "")
-      .replace(/\/api$/, "");
-    const url = isGuest
-      ? `${base}/api/mirror/report/guest`
-      : `${base}/api/mirror/report`;
-
+    const base = apiBase.replace(/\/$/, "").replace(/\/api$/, "");
+    const url = isGuest ? `${base}/api/mirror/report/guest` : `${base}/api/mirror/report`;
     const headers = { "Content-Type": "application/json" };
-    if (!isGuest) {
-      headers["Authorization"] = `Bearer ${accessToken}`;
-    }
+    if (!isGuest) headers["Authorization"] = `Bearer ${accessToken}`;
 
     fetch(url, {
       method: "POST",
@@ -64,19 +57,18 @@ export function useMirrorReport({
       })
       .catch((err) => {
         if (!cancelled) {
-          setError(err);
           hasFetchedRef.current = false;
+          setError(err);
         }
       })
       .finally(() => {
-        if (!cancelled) setIsLoading(false);
+        if (!cancelled) setLoading(false);
       });
 
     return () => {
       cancelled = true;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [enabled]);
+  }, [enabled, retryCount, apiBase, thought, questions, answers, reflectionId, accessToken]);
 
-  return { report, isLoading, error };
+  return { report, loading, error, retry };
 }

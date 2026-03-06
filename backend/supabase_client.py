@@ -565,17 +565,30 @@ def get_reflection_patterns_by_ids(pattern_ids: list[str]) -> list[dict]:
     return []
 
 
-def get_due_reminders() -> list[dict]:
+def get_due_reminders(user_id: str) -> list[dict]:
     """
-    Fetch revisit_reminders where remind_at <= now (UTC). Returns list of { id, reflection_id, remind_at, message }.
+    Fetch revisit_reminders where remind_at <= now (UTC) for reflections owned by user_id.
+    Returns list of { id, reflection_id, remind_at, message }.
     """
+    if not user_id or not str(user_id).strip():
+        return []
     client = _get_client()
     if not client:
         return []
     try:
         from datetime import datetime, timezone
         now_iso = datetime.now(timezone.utc).isoformat()
-        response = client.table("revisit_reminders").select("id, reflection_id, remind_at, message").lte("remind_at", now_iso).execute()
+        refs = client.table("reflections").select("id").eq("user_id", user_id.strip()).limit(5000).execute()
+        ref_ids = [r["id"] for r in (refs.data or []) if r.get("id")]
+        if not ref_ids:
+            return []
+        response = (
+            client.table("revisit_reminders")
+            .select("id, reflection_id, remind_at, message")
+            .in_("reflection_id", ref_ids)
+            .lte("remind_at", now_iso)
+            .execute()
+        )
         return response.data or []
     except Exception as e:
         logger.exception("Supabase get_due_reminders failed: %s", e)

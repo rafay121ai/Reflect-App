@@ -19,6 +19,10 @@ import threading
 import time
 from datetime import datetime, timezone, timedelta
 
+import sentry_sdk
+from sentry_sdk.integrations.fastapi import FastApiIntegration
+from sentry_sdk.integrations.starlette import StarletteIntegration
+
 from dotenv import load_dotenv
 load_dotenv()  # load .env before other modules read SUPABASE_* etc.
 from fastapi import BackgroundTasks, Depends, FastAPI, Header, HTTPException
@@ -99,6 +103,15 @@ logging.getLogger("ollama_client").setLevel(logging.WARNING)
 
 # Route handlers are sync def; FastAPI runs them in a thread pool, so blocking Supabase/LLM calls do not block the event loop.
 app = FastAPI(title="REFLECT API", version="0.1.0")
+
+SENTRY_DSN = os.getenv("SENTRY_DSN")
+if SENTRY_DSN:
+    sentry_sdk.init(
+        dsn=SENTRY_DSN,
+        integrations=[StarletteIntegration(), FastApiIntegration()],
+        traces_sample_rate=0.1,
+        send_default_pii=False,
+    )
 
 limiter = Limiter(key_func=get_remote_address)
 app.state.limiter = limiter
@@ -273,7 +286,6 @@ class MoodRequest(BaseModel):
 
 
 class SaveHistoryRequest(BaseModel):
-    user_identifier: str = Field(..., max_length=256)
     raw_text: str = Field(..., max_length=50000)
     answers: list[dict] = Field(..., max_length=100)
     mirror_response: str = Field(..., max_length=50000)
@@ -392,9 +404,7 @@ def get_reflection_route(reflection_id: str, user_id: str = Depends(require_user
 def reminders_due(user_id: str = Depends(require_user_id)):
     """Get reminders where remind_at <= now, for reflections owned by the current user only."""
     try:
-        all_due = get_due_reminders()
-        user_reflection_ids = {r["id"] for r in list_reflections_by_user(user_id, limit=5000) if r.get("id")}
-        reminders = [m for m in all_due if (m.get("reflection_id") or "") in user_reflection_ids]
+        reminders = get_due_reminders(user_id)
         return {"reminders": reminders}
     except Exception as e:
         raise _server_error(e, "reminders_due")
@@ -487,6 +497,13 @@ def _do_reflect(body: ReflectRequest, user_id: str | None = None, background_tas
             logging.info("Pattern extraction returned None (LLM may have returned non-JSON)")
         if background_tasks and user_id:
             background_tasks.add_task(refresh_personalization_context_for_user, user_id)
+        if user_id:
+            logger.info(
+                "reflect_success user=%s reflection_id=%s",
+                user_id[:8] + "...", reflection_id,
+            )
+        else:
+            logger.info("reflect_success_guest guest_id=anon")
         return {"id": reflection_id, "sections": sections}
     except HTTPException:
         raise
@@ -547,16 +564,17 @@ async def webhook_lemon_squeezy(
     user_id = (event.get("user_id") or "").strip()
     if not user_id and event.get("user_email"):
         user_id = get_user_id_by_email(event["user_email"])
-    if not user_id:
-        logger.warning(
-            "Lemon Squeezy webhook: no user found for email (check profiles.email matches checkout email). email_prefix=%s",
-            (event.get("user_email") or "")[:3] + "..." if event.get("user_email") else "n/a",
-        )
-        return {"ok": True}
-
-    # 2. Deduplicate — reject replayed events
     event_id = (body.get("meta") or {}).get("event_id", "") or ""
     event_name = event.get("event_name", "")
+
+    if not user_id:
+        logger.warning(
+            "webhook_no_user_match event=%s event_id=%s email_prefix=%s",
+            event_name, event_id, (event.get("user_email") or "")[:3] + "...",
+        )
+        return {"ok": True, "warning": "no_user_match"}
+
+    # 2. Deduplicate — reject replayed events
     if event_id and is_duplicate_event(event_id):
         return {"ok": True, "skipped": "duplicate"}
 
@@ -569,21 +587,36 @@ async def webhook_lemon_squeezy(
         if event_name == "order_created":
             if status == "paid":
                 update_user_plan(user_id, plan_type)
-                logger.info("Lemon Squeezy order_created: updated user %s to plan %s", user_id[:8] + "...", plan_type)
-        elif status == "active":
-            update_user_plan(user_id, plan_type)
-            logger.info("Lemon Squeezy subscription active: updated user %s to plan %s", user_id[:8] + "...", plan_type)
-        elif status in ("cancelled", "expired"):
-            update_user_plan(user_id, "trial")
-    finally:
+                logger.info("LS order_created: updated user %s to plan %s", user_id[:8] + "...", plan_type)
+        elif event_name in ("subscription_created", "subscription_updated"):
+            if status == "active":
+                update_user_plan(user_id, plan_type)
+                logger.info("LS %s: updated user %s to plan %s", event_name, user_id[:8] + "...", plan_type)
+        elif event_name == "subscription_cancelled":
+            if status in ("cancelled", "expired"):
+                update_user_plan(user_id, "trial")
+                logger.info("LS subscription_cancelled: downgraded user %s to trial", user_id[:8] + "...")
+
+        # ONLY record after successful update — if Supabase fails above, LS will retry
         if event_id:
             record_event(event_id, event_name)
+
+    except Exception as e:
+        # ALERT: search Railway logs for "webhook_update_failed" to detect paying users
+        # whose plan was not updated. Set up a log-based alert in your Railway log drain
+        # (Logtail, Papertrail, or Datadog) on this string.
+        logger.exception(
+            "webhook_update_failed event=%s event_id=%s user=%s error=%s",
+            event_name, event_id, user_id[:8] + "..." if user_id else "none", type(e).__name__,
+        )
+        raise HTTPException(status_code=500, detail="Webhook processing failed")
 
     return {"ok": True}
 
 
 @app.post("/api/reflect/guest")
-@limiter.limit("10/minute")
+@limiter.limit("5/minute")
+@limiter.limit("30/day")
 def reflect_guest(request: Request, body: ReflectRequest, background_tasks: BackgroundTasks):
     """
     Guest reflection endpoint: no auth, no per-user limits. Uses the same LLM flow
@@ -774,7 +807,7 @@ def mirror_report(
 
 
 @app.post("/api/mirror/report/guest")
-@limiter.limit("5/minute")
+@limiter.limit("3/minute")
 def mirror_report_guest(
     request: Request,
     body: MirrorReportRequest,

@@ -11,6 +11,7 @@ import { useState, useEffect, useCallback } from "react";
 import { Link } from "react-router-dom";
 import { motion } from "framer-motion";
 import { X, Check, Download, Trash2, User, ChevronRight, Crown, RefreshCw } from "lucide-react";
+import { toast } from "sonner";
 import { useAuth } from "../contexts/AuthContext";
 import { useRevenueCat } from "../contexts/RevenueCatContext";
 import { getReflectionMode, setReflectionMode, getAvailableModes, DEFAULT_MODE } from "../lib/reflectionMode";
@@ -42,6 +43,21 @@ const SectionHeader = ({ title, subtitle }) => (
 const SectionDivider = () => (
   <div className="border-t border-[#E2E8F0]/60 my-6" />
 );
+
+// Sentry test button — remove after verifying error tracking
+function ErrorButton() {
+  return (
+    <button
+      type="button"
+      onClick={() => {
+        throw new Error("This is your first error!");
+      }}
+      className="w-full py-2.5 px-4 text-sm rounded-lg border border-amber-200 text-amber-700 bg-amber-50/50 hover:bg-amber-50"
+    >
+      Break the world (test Sentry)
+    </button>
+  );
+}
 
 // Reflection mode selector
 const ReflectionModeSelector = ({ currentMode, onChange }) => {
@@ -181,7 +197,7 @@ const ActionRow = ({ icon: Icon, label, sublabel, onClick, danger, disabled, hre
 
 // Main Settings Panel
 const SettingsPanel = ({ apiBase, onClose, onOpenSignIn, usage, onRefetchUsage }) => {
-  const { user, signOut } = useAuth();
+  const { user, session, signOut } = useAuth();
   const {
     isSupported: isRevenueCatSupported,
     isPremium,
@@ -259,11 +275,7 @@ const SettingsPanel = ({ apiBase, onClose, onOpenSignIn, usage, onRefetchUsage }
   };
 
   const handleExportData = () => {
-    alert("Export feature coming soon. Your data will be downloadable as JSON.");
-  };
-
-  const handleDeleteData = () => {
-    alert("Delete feature coming soon. This will permanently remove all your reflections.");
+    toast("Data export is coming soon. We'll email you when it's ready.");
   };
 
   const handleDeleteAccount = async () => {
@@ -284,7 +296,7 @@ const SettingsPanel = ({ apiBase, onClose, onOpenSignIn, usage, onRefetchUsage }
       await supabase.auth.signOut();
       window.location.href = "/";
     } catch (err) {
-      console.error("Failed to delete account:", err);
+      if (process.env.NODE_ENV !== "production") console.error("Failed to delete account:", err);
       alert("Something went wrong. Please try again or contact support.");
       setDeleting(false);
       setShowDeleteConfirm(false);
@@ -523,6 +535,8 @@ const SettingsPanel = ({ apiBase, onClose, onOpenSignIn, usage, onRefetchUsage }
                                 variantId: lemon.variantMonthly,
                                 userId: user?.id,
                                 userEmail: user?.email || "",
+                                getAuthToken: () => session?.access_token ?? null,
+                                onCheckoutSuccessMessage: (msg) => toast(msg),
                               },
                               (err) => err && window.alert?.(err)
                             )
@@ -541,6 +555,8 @@ const SettingsPanel = ({ apiBase, onClose, onOpenSignIn, usage, onRefetchUsage }
                                 variantId: lemon.variantYearly,
                                 userId: user?.id,
                                 userEmail: user?.email || "",
+                                getAuthToken: () => session?.access_token ?? null,
+                                onCheckoutSuccessMessage: (msg) => toast(msg),
                               },
                               (err) => err && window.alert?.(err)
                             )
@@ -588,18 +604,9 @@ const SettingsPanel = ({ apiBase, onClose, onOpenSignIn, usage, onRefetchUsage }
               />
               <ActionRow
                 icon={Download}
-                label="Export your data"
-                sublabel="Download all reflections as JSON"
+                label="Export data (coming soon)"
+                sublabel="We'll email you a copy — available soon."
                 onClick={handleExportData}
-                disabled
-              />
-              <ActionRow
-                icon={Trash2}
-                label="Delete all data"
-                sublabel="Permanently remove everything"
-                onClick={handleDeleteData}
-                danger
-                disabled
               />
             </div>
           </section>
@@ -694,6 +701,13 @@ const SettingsPanel = ({ apiBase, onClose, onOpenSignIn, usage, onRefetchUsage }
               )}
             </div>
           ) : null}
+
+          {process.env.NODE_ENV !== "production" && (
+            <div className="mt-6 pt-6 border-t border-[#E2E8F0]/60">
+              <p className="text-[12px] text-[#94A3B8] mb-2">Test Sentry</p>
+              <ErrorButton />
+            </div>
+          )}
 
           {/* Footer note */}
           <p className="text-[10px] text-[#94A3B8] text-center mt-6">

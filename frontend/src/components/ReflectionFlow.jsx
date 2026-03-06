@@ -43,7 +43,7 @@ function MirrorStepBlock({
   const [userChoseReadNow, setUserChoseReadNow] = useState(false);
   const [mirrorOpened, setMirrorOpened] = useState(false);
   const showMirrorReadNow = userChoseReadNow;
-  const { report: mirrorReport, isLoading: reportLoading } = useMirrorReport({
+  const { report: mirrorReport, loading: reportLoading, error, retry } = useMirrorReport({
     apiBase,
     thought: originalThought,
     questions,
@@ -107,7 +107,39 @@ function MirrorStepBlock({
           }}
         >
           <AnimatePresence mode="wait">
-            {!mirrorOpened ? (
+            {error ? (
+              <div
+                style={{
+                  display: "flex",
+                  flexDirection: "column",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  height: "100%",
+                  gap: "16px",
+                  textAlign: "center",
+                  padding: "0 24px",
+                }}
+              >
+                <p style={{ color: "rgba(255,255,255,0.7)", fontSize: "14px" }}>
+                  Something went wrong loading your mirror.
+                </p>
+                <button
+                  type="button"
+                  onClick={retry}
+                  style={{
+                    color: "white",
+                    textDecoration: "underline",
+                    textUnderlineOffset: "4px",
+                    fontSize: "14px",
+                    background: "none",
+                    border: "none",
+                    cursor: "pointer",
+                  }}
+                >
+                  Try again
+                </button>
+              </div>
+            ) : !mirrorOpened ? (
               <motion.div
                 key="entry"
                 initial={{ opacity: 0 }}
@@ -160,6 +192,8 @@ const ReflectionFlow = ({
   onSetReminder,
   onReflectAnother,
   onStartFresh,
+  saveError,
+  onRetrySave,
   onReflectionComplete,
 }) => {
   const [currentStep, setCurrentStep] = useState(STEPS.JOURNEY);
@@ -381,27 +415,57 @@ const ReflectionFlow = ({
           )}
 
           {currentStep === STEPS.CLOSING && (
-            <ClosingScreen
-              key="closing"
-              closingText={closingText}
-              isLoading={isLoadingClosing}
-              onDone={() => {
-                if (onReflectionComplete && originalThought && personalizedMirror != null) {
-                  onReflectionComplete({
-                    thought: originalThought.trim(),
-                    mirror: personalizedMirror,
-                    mood: lastMoodWord || null,
-                    closing: closingText || "",
-                  });
-                }
-                // Trigger existing app completion flow
-                if (onReflectAnother) {
-                  onReflectAnother();
-                } else if (onStartFresh) {
-                  onStartFresh();
-                }
-              }}
-            />
+            <>
+              <ClosingScreen
+                key="closing"
+                closingText={closingText}
+                isLoading={isLoadingClosing}
+                onDone={() => {
+                  if (onReflectionComplete && originalThought && personalizedMirror != null) {
+                    onReflectionComplete({
+                      thought: originalThought.trim(),
+                      mirror: personalizedMirror,
+                      mood: lastMoodWord || null,
+                      closing: closingText || "",
+                    });
+                  }
+                  // Trigger existing app completion flow
+                  if (onReflectAnother) {
+                    onReflectAnother();
+                  } else if (onStartFresh) {
+                    onStartFresh();
+                  }
+                }}
+              />
+              {saveError && onRetrySave && (
+                <div
+                  style={{
+                    marginTop: "16px",
+                    textAlign: "center",
+                    fontSize: "13px",
+                    color: "rgba(255,255,255,0.6)",
+                  }}
+                >
+                  Couldn't save your reflection.{" "}
+                  <button
+                    type="button"
+                    onClick={onRetrySave}
+                    style={{
+                      color: "white",
+                      textDecoration: "underline",
+                      textUnderlineOffset: "3px",
+                      background: "none",
+                      border: "none",
+                      cursor: "pointer",
+                      fontSize: "13px",
+                      padding: 0,
+                    }}
+                  >
+                    Retry
+                  </button>
+                </div>
+              )}
+            </>
           )}
         </AnimatePresence>
       </div>

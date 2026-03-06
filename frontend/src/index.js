@@ -1,3 +1,24 @@
+import * as Sentry from "@sentry/react";
+
+const SENTRY_DSN = process.env.REACT_APP_SENTRY_DSN;
+if (SENTRY_DSN) {
+  Sentry.init({
+    dsn: SENTRY_DSN,
+    environment: process.env.NODE_ENV,
+    tracesSampleRate: 0.1,
+    beforeSend(event) {
+      if (event.breadcrumbs && Array.isArray(event.breadcrumbs)) {
+        event.breadcrumbs = event.breadcrumbs.map((b) => ({
+          ...b,
+          message: b.message?.substring(0, 100) ?? b.message,
+          data: undefined,
+        }));
+      }
+      return event;
+    },
+  });
+}
+
 import React from "react";
 import ReactDOM from "react-dom/client";
 import { BrowserRouter, Routes, Route } from "react-router-dom";

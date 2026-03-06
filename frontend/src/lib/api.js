@@ -13,6 +13,11 @@ export function getAuthHeaders() {
   return { Authorization: `Bearer ${currentAccessToken}` };
 }
 
+/** Return the current access token (for use in checkout success polling). */
+export function getAuthToken() {
+  return currentAccessToken;
+}
+
 /**
  * Profile API helpers. Pass your API base (e.g. `${BACKEND_URL}/api`).
  */

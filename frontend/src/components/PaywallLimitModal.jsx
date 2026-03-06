@@ -6,6 +6,7 @@
 import { useState, useEffect } from "react";
 import { motion } from "framer-motion";
 import { Crown } from "lucide-react";
+import { toast } from "sonner";
 import { useAuth } from "../contexts/AuthContext";
 import { useRevenueCat } from "../contexts/RevenueCatContext";
 import { openCheckout, getLemonVariants } from "../lib/lemonSqueezy";
@@ -20,7 +21,7 @@ function isNative() {
 }
 
 export default function PaywallLimitModal({ onUpgrade, onDismiss }) {
-  const { user } = useAuth();
+  const { user, session } = useAuth();
   const { isSupported: isRevenueCatSupported, presentPaywall } = useRevenueCat();
   const [lemonReady, setLemonReady] = useState(false);
   const variants = getLemonVariants();
@@ -28,6 +29,11 @@ export default function PaywallLimitModal({ onUpgrade, onDismiss }) {
   useEffect(() => {
     if (!isNative() && variants.isConfigured) setLemonReady(true);
   }, [variants.isConfigured]);
+
+  const checkoutOpts = () => ({
+    getAuthToken: () => session?.access_token ?? null,
+    onCheckoutSuccessMessage: (msg) => toast(msg),
+  });
 
   const handleUpgrade = () => {
     if (isNative() && isRevenueCatSupported) {
@@ -38,7 +44,7 @@ export default function PaywallLimitModal({ onUpgrade, onDismiss }) {
     if (lemonReady && user?.id) {
       const variantId = variants.variantMonthly || variants.variantYearly;
       openCheckout(
-        { variantId, userId: user.id, userEmail: user.email || "" },
+        { variantId, userId: user.id, userEmail: user.email || "", ...checkoutOpts() },
         (err) => err && window.alert?.(err)
       );
       onUpgrade?.();
@@ -75,7 +81,7 @@ export default function PaywallLimitModal({ onUpgrade, onDismiss }) {
                   type="button"
                   onClick={() => {
                     openCheckout(
-                      { variantId: variants.variantMonthly, userId: user?.id, userEmail: user?.email || "" },
+                      { variantId: variants.variantMonthly, userId: user?.id, userEmail: user?.email || "", ...checkoutOpts() },
                       (e) => e && window.alert?.(e)
                     );
                     onUpgrade?.();
@@ -88,7 +94,7 @@ export default function PaywallLimitModal({ onUpgrade, onDismiss }) {
                   type="button"
                   onClick={() => {
                     openCheckout(
-                      { variantId: variants.variantYearly, userId: user?.id, userEmail: user?.email || "" },
+                      { variantId: variants.variantYearly, userId: user?.id, userEmail: user?.email || "", ...checkoutOpts() },
                       (e) => e && window.alert?.(e)
                     );
                     onUpgrade?.();

@@ -86,7 +86,7 @@ export function AuthProvider({ children }) {
 
           if (!cancelled) {
             if (exchangeError) {
-              console.error("Code exchange failed:", exchangeError);
+              if (process.env.NODE_ENV !== "production") console.error("Code exchange failed:", exchangeError);
               setSession(null);
               setUser(null);
               setAuthToken(null);
@@ -118,7 +118,7 @@ export function AuthProvider({ children }) {
           }
         }
       } catch (err) {
-        console.error("Auth init error:", err);
+        if (process.env.NODE_ENV !== "production") console.error("Auth init error:", err);
         if (!cancelled) setLoading(false);
       }
     };
