@@ -101,14 +101,28 @@ export function AuthProvider({ children }) {
           }
         } else {
           // Restore session from storage (e.g. after user reopens tab on mobile).
-          // Retry a few times so we don't give up if storage isn't ready on first read.
+          // The storage adapter may return a minimal cookie-restored session with
+          // an empty access_token and a valid refresh_token. In that case, explicitly
+          // refresh before treating it as "no session."
           let s = (await supabase.auth.getSession()).data?.session ?? null;
+
+          // If session exists but access_token is empty, the cookie restored a
+          // refresh_token and Supabase hasn't auto-refreshed yet. Force it.
+          if (s && !s.access_token && s.refresh_token) {
+            const { data: refreshed } = await supabase.auth.refreshSession({
+              refresh_token: s.refresh_token,
+            });
+            s = refreshed?.session ?? null;
+          }
+
+          // Retry a few times in case storage wasn't ready on first read.
           const delays = [200, 600];
           for (const ms of delays) {
-            if (s || cancelled) break;
+            if ((s && s.access_token) || cancelled) break;
             await new Promise((r) => setTimeout(r, ms));
             s = (await supabase.auth.getSession()).data?.session ?? null;
           }
+
           if (!cancelled) {
             setSession(s);
             setUser(s?.user ?? null);
