@@ -643,9 +643,22 @@ def get_reflection(thought: str, reflection_mode: str = "gentle", user_context: 
     # Step 2: Generate adaptive questions based on type
     adaptive_questions = _generate_adaptive_questions(thought, conversation_type, mode)
 
-    # Build the prompt based on conversation type.
-    # Each type has its own tone, examples, and banned words.
-    # The goal: the user reads the card and thinks "yes, exactly" — never "whoa, that's a lot."
+    # Journey card system prompt — stripped down, no poetry encouragement.
+    # The main config["system"] is designed for mirrors/closings and encourages 10% poetic language,
+    # which overrides banned-word lists in the user prompt. Journey cards need a flat, direct system voice.
+    journey_system = """You write two short reflection cards for someone who just shared a thought.
+
+You speak TO them. Always "you." Never "they."
+
+ABSOLUTE RULES:
+- No metaphors. No imagery. No poetic phrasing. Zero.
+- No references to hallways, mirrors, light, darkness, water, weight, walls, doors, windows, paths, or any physical scene they didn't mention.
+- No therapy language: "processing", "boundaries", "inner child", "coping", "attachment", "pattern."
+- No body references: weight, chest, shoulders, breath, gut.
+- Every sentence must sound like something a direct, perceptive friend would actually say out loud.
+- If a sentence needs to be read twice to understand, rewrite it simpler.
+- Match their energy. If they wrote casually, respond casually. If they wrote seriously, be serious.
+- One to two sentences per section. Short."""
 
     if conversation_type == "PRACTICAL":
         prompt = f'''Thought: "{thought}"
@@ -736,9 +749,11 @@ TONE: This person is sharing something they're feeling. They need to feel met �
 not analyzed, not diagnosed, not impressed by your insight. Warm and simple.
 Like someone who heard them and said the right thing.
 
-BANNED in this response:
+BANNED in this response — do not use ANY of these:
+- Metaphors, imagery, or poetic scenes (no hallways, mirrors, light, water, paths, doors, walls)
 - Clinical language: "pattern", "coping mechanism", "avoidance", "attachment style"
 - Sentences that start with "You have a pattern of..." or "What you're really saying is..."
+- Words: "weight", "hum", "beneath", "quiet", "carry", "hold", "sit with", "space", "tender", "ache"
 - Anything that would make them feel like a case study or feel ashamed
 - Over-reaching: don't go to the deepest possible interpretation. Go one step beneath what they said.
 
@@ -775,8 +790,11 @@ say first if you asked "what's this really about?" — and lead with that regist
 Keep it grounded. Don't try to address every layer. Pick the one that matters most
 and respond to THAT.
 
-BANNED: metaphors that need decoding, therapy language, character judgments,
-anything that would make them think "that's not what I meant."
+BANNED — do not use ANY of these:
+- Metaphors, imagery, or poetic scenes of any kind
+- Words: "weight", "hum", "beneath", "quiet", "carry", "hold", "sit with", "space", "tender", "ache"
+- Therapy language, character judgments, clinical terms
+- Anything that would make them think "that's not what I meant."
 
 Match their register. Simple. Direct. Human.
 
@@ -800,7 +818,7 @@ OUTPUT FORMAT: Start each section with exactly ## SectionName.
 ## What's Underneath This'''
 
 
-    raw = _chat(prompt, system=config["system"])
+    raw = _chat(prompt, system=journey_system)
     if not (raw and raw.strip()):
         logger.warning("get_reflection: LLM returned empty response; using fallback sections. Check OPENAI_API_KEY and model.")
     sections = _parse_sections(raw)

@@ -25,7 +25,6 @@ export function useMirrorReport(options) {
     if (!apiBase || !thought?.trim()) return;
 
     const answersArr = Array.isArray(answers) ? answers : [];
-    if (answersArr.length === 0) return;
 
     hasFetchedRef.current = true;
     let cancelled = false;
