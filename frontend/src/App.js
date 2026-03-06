@@ -743,13 +743,13 @@ function App() {
               className="text-center mt-4"
               style={{ fontFamily: "'Fraunces', serif", fontSize: "22px", color: "#2d3748" }}
             >
-              Your reflection is ready.
+              Want to see your pattern over time?
             </h2>
             <p
               className="text-center mt-2"
               style={{ fontSize: "14px", color: "#718096", lineHeight: 1.6 }}
             >
-              Sign in to unlock your mirror and save your reflections across sessions.
+              Sign in to unlock your full mirror and track how you think across reflections.
             </p>
             <div className="mt-6">
               <button
