@@ -1,5 +1,5 @@
 import { motion } from "framer-motion";
-import { Feather } from "lucide-react";
+import AppLogo from "./AppLogo";
 
 const InputScreen = ({ thought, setThought, onSubmit, isSubmitting = false }) => {
   const charCount = thought.length;
@@ -39,10 +39,8 @@ const InputScreen = ({ thought, setThought, onSubmit, isSubmitting = false }) =>
           initial={{ opacity: 0, scale: 0.8 }}
           animate={{ opacity: 1, scale: 1 }}
           transition={{ delay: 0.2, duration: 0.5 }}
-          className="w-14 h-14 rounded-full flex items-center justify-center"
-          style={{ background: "linear-gradient(135deg, #FFB4A9 0%, #FFDDD2 100%)" }}
         >
-          <Feather className="w-6 h-6 text-white" />
+          <AppLogo size="md" />
         </motion.div>
         
         <h1 

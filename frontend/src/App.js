@@ -22,7 +22,8 @@ import PaywallLimitModal from "./components/PaywallLimitModal";
 import GuestSignupModal from "./components/GuestSignupModal";
 import TrialWelcomeModal, { hasSeenTrialWelcome } from "./components/TrialWelcomeModal";
 import TrialExpiredModal from "./components/TrialExpiredModal";
-import { BookOpen, Settings, Feather } from "lucide-react";
+import { BookOpen, Settings } from "lucide-react";
+import AppLogo from "./components/AppLogo";
 import { supabase } from "./lib/supabase";
 import { getBackendUrl } from "./lib/config";
 import { getGuestCount, saveGuestReflection, saveGuestReflectionToDb, getOrCreateGuestId, getGuestId, GUEST_MAX_REFLECTIONS } from "./lib/guestSession";
@@ -732,12 +733,8 @@ function App() {
             className="relative w-full max-w-[380px] rounded-[24px] overflow-hidden"
             style={{ background: "#FDFAF6", padding: "40px 32px" }}
           >
-            {/* Feather icon */}
-            <div
-              className="flex justify-center w-12 h-12 rounded-full flex items-center justify-center mx-auto"
-              style={{ background: "linear-gradient(135deg, #FFB4A9 0%, #FFDDD2 100%)" }}
-            >
-              <Feather className="w-6 h-6 text-white" />
+            <div className="flex justify-center mx-auto">
+              <AppLogo size="sm" />
             </div>
             <h2
               className="text-center mt-4"

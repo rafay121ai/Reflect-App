@@ -51,11 +51,12 @@ const storageAdapter =
             const rt = getCookie(RT_COOKIE_NAME);
             if (rt) {
               const minimal = JSON.stringify({
-                access_token: "",
+                access_token: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjF9.fake",
                 refresh_token: rt,
-                expires_at: 0,
-                expires_in: 0,
+                expires_at: 1,
+                expires_in: -1,
                 token_type: "bearer",
+                user: null,
               });
               try {
                 window.localStorage.setItem(key, minimal);
@@ -94,9 +95,10 @@ if (supabaseUrl && supabaseAnonKey) {
   try {
     supabase = createClient(supabaseUrl, supabaseAnonKey, {
       auth: {
-        flowType: "pkce",
+        flowType: "implicit",
         detectSessionInUrl: true,
         persistSession: true,
+        autoRefreshToken: true,
         ...(storageAdapter && { storage: storageAdapter }),
       },
     });

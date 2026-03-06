@@ -49,24 +49,9 @@ export function AuthProvider({ children }) {
 
     const initAuth = async () => {
       try {
-        const params = new URLSearchParams(window.location.search);
         const hashParams = new URLSearchParams((window.location.hash || "").replace(/^#/, ""));
-        const errorFromUrl = params.get("error") || hashParams.get("error");
-        const errorDesc = params.get("error_description") || hashParams.get("error_description");
-
-        const clearAuthQuery = () => {
-          try {
-            const current = new URLSearchParams(window.location.search);
-            current.delete("code");
-            current.delete("error");
-            current.delete("error_description");
-            const search = current.toString();
-            const nextUrl = search ? `${window.location.pathname}?${search}` : window.location.pathname;
-            window.history.replaceState({}, document.title, nextUrl);
-          } catch {
-            window.history.replaceState({}, document.title, window.location.pathname);
-          }
-        };
+        const errorFromUrl = hashParams.get("error") || new URLSearchParams(window.location.search).get("error");
+        const errorDesc = hashParams.get("error_description") || new URLSearchParams(window.location.search).get("error_description");
 
         if (errorFromUrl && !cancelled) {
           setError(
@@ -75,61 +60,22 @@ export function AuthProvider({ children }) {
               : "Sign-in failed. Check Google and Supabase settings."
           );
           setLoading(false);
-          clearAuthQuery();
           return;
         }
 
-        const code = params.get("code");
+        let s = (await supabase.auth.getSession()).data?.session ?? null;
 
-          if (code) {
-          const { data, error: exchangeError } = await supabase.auth.exchangeCodeForSession(code);
+        if (!s?.access_token && !cancelled) {
+          const { data: refreshed } = await supabase.auth.refreshSession();
+          s = refreshed?.session ?? null;
+        }
 
-          if (!cancelled) {
-            if (exchangeError) {
-              if (process.env.NODE_ENV !== "production") console.error("Code exchange failed:", exchangeError);
-              setSession(null);
-              setUser(null);
-              setAuthToken(null);
-              } else {
-              setSession(data.session);
-              setUser(data.session?.user ?? null);
-              setAuthToken(data.session?.access_token ?? null);
-              syncProfile(API_BASE).catch(() => {});
-            }
-            clearAuthQuery();
-            setLoading(false);
-          }
-        } else {
-          // Restore session from storage (e.g. after user reopens tab on mobile).
-          // The storage adapter may return a minimal cookie-restored session with
-          // an empty access_token and a valid refresh_token. In that case, explicitly
-          // refresh before treating it as "no session."
-          let s = (await supabase.auth.getSession()).data?.session ?? null;
-
-          // If session exists but access_token is empty, the cookie restored a
-          // refresh_token and Supabase hasn't auto-refreshed yet. Force it.
-          if (s && !s.access_token && s.refresh_token) {
-            const { data: refreshed } = await supabase.auth.refreshSession({
-              refresh_token: s.refresh_token,
-            });
-            s = refreshed?.session ?? null;
-          }
-
-          // Retry a few times in case storage wasn't ready on first read.
-          const delays = [200, 600];
-          for (const ms of delays) {
-            if ((s && s.access_token) || cancelled) break;
-            await new Promise((r) => setTimeout(r, ms));
-            s = (await supabase.auth.getSession()).data?.session ?? null;
-          }
-
-          if (!cancelled) {
-            setSession(s);
-            setUser(s?.user ?? null);
-            setAuthToken(s?.access_token ?? null);
-            setLoading(false);
-            if (s?.access_token) syncProfile(API_BASE).catch(() => {});
-          }
+        if (!cancelled) {
+          setSession(s);
+          setUser(s?.user ?? null);
+          setAuthToken(s?.access_token ?? null);
+          setLoading(false);
+          if (s?.access_token) syncProfile(API_BASE).catch(() => {});
         }
       } catch (err) {
         if (process.env.NODE_ENV !== "production") console.error("Auth init error:", err);

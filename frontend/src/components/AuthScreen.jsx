@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { motion } from "framer-motion";
 import { useAuth } from "../contexts/AuthContext";
-import { Feather } from "lucide-react";
+import AppLogo from "./AppLogo";
 
 const GoogleIcon = () => (
   <svg className="w-5 h-5" viewBox="0 0 24 24" aria-hidden="true">
@@ -37,12 +37,7 @@ export default function AuthScreen({ compact = false }) {
         {!compact && (
           <>
             <div className="flex justify-center mb-8">
-              <div
-                className="w-16 h-16 rounded-full flex items-center justify-center"
-                style={{ background: "linear-gradient(135deg, #FFB4A9 0%, #FFDDD2 100%)" }}
-              >
-                <Feather className="w-8 h-8 text-white" />
-              </div>
+              <AppLogo size="lg" />
             </div>
             <h1
               className="text-2xl font-light text-[#4A5568] text-center mb-2"
