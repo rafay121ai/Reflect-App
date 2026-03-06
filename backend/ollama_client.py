@@ -488,37 +488,68 @@ def get_reflection(thought: str, reflection_mode: str = "gentle", user_context: 
     questions_text = "\n".join([f"- {q}" for q in adaptive_questions])
     
     # Step 3: Generate reflection sections (with adaptive questions embedded)
-    prompt = f'''Thought: "{thought}"
-
-{personalization_block}
-
-Create exactly 6 reflection sections. Speak TO them using "you." Be SHORT. Use SIMPLE English only—no complex or fancy words. Aim for specific, subtle, personal. The kind of line that lands like a shiver.
-
-CRITICAL: Keep each section brief. One or two short sentences per section (except the mirror: 2-3 max). If you can say it in fewer words, do. No padding.
-
-## What This Feels Like
-({lengths["feels_like"]})
+    # Mindset-aware section instructions
+    if conversation_type == "PRACTICAL":
+        feels_like_inst = f"""({lengths["feels_like"]})
+Name the practical tension or hesitation — what's making this hard to act on.
+"You're..." or "The hard part is..."
+Stay in their rational headspace. No emotional excavation. No metaphors.
+e.g. "You already know what you want to do — the friction is in how to say it."
+"""
+        stuck_inst = f"""({lengths["stuck"]})
+Where the decision or action is stalling. One clear line.
+e.g. "You're going back and forth between being direct and being diplomatic."
+"""
+        believe_inst = f"""({lengths["believe"]})
+The real concern or constraint they haven't said directly.
+"The real thing here is..." or "What's holding this up is..."
+One sentence. A hidden calculation, not a hidden feeling.
+e.g. "You're weighing politeness against clarity, and politeness is winning."
+"""
+        matters_inst = f"""({lengths["matters"]})
+Why this situation actually matters — the practical stakes, not abstract emotions.
+One or two sentences. Use "you."
+"""
+        mirror_inst = f"""({lengths["mirror"]})
+Read how they framed this. What does the WAY they stated it tell you about how they make decisions?
+Use THEIR specific words. One or two sentences. Grounded, not poetic.
+e.g. "You asked 'how to say no' — not 'should I say no.' You already decided. You're looking for permission to be direct."
+"""
+    elif conversation_type == "SOCIAL":
+        feels_like_inst = f"""({lengths["feels_like"]})
+Name the social tension — how they see themselves vs. how they think others see them.
+"You're..." or "This feels like..."
+e.g. "You're trying to figure out the version of yourself that fits here."
+"""
+        stuck_inst = f"""({lengths["stuck"]})
+Where they're caught between who they are and who they think they should be. One clear line.
+"""
+        believe_inst = f"""({lengths["believe"]})
+A quiet assumption about who they should be or how they should be seen.
+"There's a belief here that..." One sentence. About identity.
+"""
+        matters_inst = f"""({lengths["matters"]})
+What this touches — belonging, being seen, being enough. Simple words. One or two sentences. Use "you."
+"""
+        mirror_inst = f"""({lengths["mirror"]})
+What does the WAY they wrote this reveal about how they relate to others?
+Use THEIR specific words and details. One or two sentences. Make it land like recognition.
+"""
+    else:
+        feels_like_inst = f"""({lengths["feels_like"]})
 The feeling under the thought. Simple words. "You're..." or "This feels like..."
 e.g. "You're holding a lot with nowhere to set it down." / "There's a tightness here, like you're bracing for something."
-
-## Where You're Stuck
-({lengths["stuck"]})
+"""
+        stuck_inst = f"""({lengths["stuck"]})
 Where their thinking is circling. One clear line. e.g. "You keep going back to what already happened, looking for a different answer."
-
-## What You Believe Right Now
-({lengths["believe"]})
+"""
+        believe_inst = f"""({lengths["believe"]})
 One quiet belief under the thought. "You're believing that..." or "There's an assumption here that..." One sentence.
-
-## Why This Matters to You
-({lengths["matters"]})
+"""
+        matters_inst = f"""({lengths["matters"]})
 What this really touches—connection, safety, being enough, time. Simple words. One or two sentences. Use "you."
-
-## Some Things to Notice
-Use these exact questions (one per line):
-{questions_text}
-
-## A Mirror
-({lengths["mirror"]})
+"""
+        mirror_inst = f"""({lengths["mirror"]})
 Read everything they wrote very carefully.
 Find the thing they're revealing about themselves WITHOUT knowing it.
 Not the surface feeling. The thing underneath.
@@ -526,7 +557,36 @@ What kind of person writes this exact thought, in these exact words?
 What does the WAY they wrote it (not just what they wrote) tell you?
 Use THEIR specific words and details — nothing generic survives here.
 One or two sentences. Make it land like recognition.
+"""
 
+    prompt = f'''Thought: "{thought}"
+
+{personalization_block}
+
+MINDSET: This person is in a {conversation_type} headspace. Match their register.
+If PRACTICAL — stay grounded, clear, no poetry. They want to think, not feel.
+If EMOTIONAL — meet the feeling first. Gentle depth is welcome.
+If SOCIAL — focus on identity and how they relate to others.
+If MIXED — read which layer is dominant and lead with that.
+
+Create exactly 6 reflection sections. Speak TO them using "you." Be SHORT. Use SIMPLE English only—no complex or fancy words. Aim for specific, subtle, personal.
+
+CRITICAL: Keep each section brief. One or two short sentences per section (except the mirror: 2-3 max). If you can say it in fewer words, do. No padding.
+
+## What This Feels Like
+{feels_like_inst}
+## Where You're Stuck
+{stuck_inst}
+## What You Believe Right Now
+{believe_inst}
+## Why This Matters to You
+{matters_inst}
+## Some Things to Notice
+Use these exact questions (one per line):
+{questions_text}
+
+## A Mirror
+{mirror_inst}
 CRITICAL: Write the actual reflection content only. No instructions, no examples in your output. Short and simple.
 
 OUTPUT FORMAT: You MUST start each section with a line containing exactly ## SectionName (e.g. ## What This Feels Like), then the content on the next lines. Use these exact section headers: ## What This Feels Like, ## Where You're Stuck, ## What You Believe Right Now, ## Why This Matters to You, ## Some Things to Notice, ## A Mirror.'''
@@ -627,7 +687,7 @@ The simpler it is, the harder it lands.
 Good: "You didn't choose independence. You chose it because
 needing people kept not working out."
 Bad: "You carry the architecture of your solitude like a
-blueprint drawn in early morning light.\"\"\""
+blueprint drawn in early morning light.\""""
 
     prompt = f"""The person shared this thought:
 {thought}
@@ -735,8 +795,7 @@ The simpler it is, the harder it lands.
 Good: "You didn't choose independence. You chose it because
 needing people kept not working out."
 Bad: "You carry the architecture of your solitude like a
-blueprint drawn in early morning light.\"\"\""
-"""
+blueprint drawn in early morning light.\""""
 
     prompt = f"""The person wrote this thought:
 "{thought}"

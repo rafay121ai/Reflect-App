@@ -442,42 +442,97 @@ def _classify_conversation_type(thought: str) -> str:
     """
     Classify the conversation type before generating questions.
     Returns: "PRACTICAL", "EMOTIONAL", "SOCIAL", or "MIXED"
+
+    Two-pass approach:
+      Pass 1 — regex heuristics catch clear-cut cases without an LLM call.
+      Pass 2 — LLM classifies ambiguous thoughts.
+
+    Test cases (expected classification):
+      "How to say no to an accountant I don't want to hire" → PRACTICAL
+      "How do I tell my boss I'm quitting" → PRACTICAL
+      "Should I take the job or stay where I am" → PRACTICAL
+      "I need to figure out what to say to my landlord" → PRACTICAL
+      "I feel like I'm disappearing" → EMOTIONAL
+      "I keep waiting for someone to notice I'm struggling" → EMOTIONAL
+      "Everything feels heavy and I don't know why" → EMOTIONAL
+      "I said yes but I didn't actually want to" → SOCIAL
+      "I don't know who I am around these people" → SOCIAL
     """
-    system = """You classify conversation types. Output ONLY one word: PRACTICAL, EMOTIONAL, SOCIAL, or MIXED. Nothing else."""
-    
-    prompt = f"""The person shared this thought:
-"{thought}"
+    lower = thought.lower().strip()
 
-Read it carefully. Decide which type of conversation this is.
+    # --- Pass 1: fast heuristic for clear-cut practical thoughts ---
+    practical_starters = (
+        "how to ", "how do i ", "how should i ", "how can i ",
+        "what's the best way to ", "what is the best way to ",
+        "should i ", "do i ", "can i ", "is it okay to ",
+        "i need to figure out ", "i need to decide ",
+        "what do i say ", "what should i say ", "what to say ",
+        "i don't know what to do about ", "i don't know how to ",
+    )
+    practical_phrases = (
+        "how to tell", "how to say no", "how to handle",
+        "how to deal with", "how to respond", "how to approach",
+        "what to do about", "what to do with", "what to say to",
+        "should i take", "should i accept", "should i quit",
+        "should i leave", "should i stay", "should i hire",
+        "should i fire", "should i move", "should i go",
+        "need to decide", "trying to decide", "can't decide",
+        "weighing my options", "pros and cons",
+    )
+    if any(lower.startswith(s) for s in practical_starters):
+        return "PRACTICAL"
+    if any(p in lower for p in practical_phrases):
+        return "PRACTICAL"
 
-There are three types:
+    # Strong emotional signals — the thought is about an internal state, not a situation
+    emotional_phrases = (
+        "i feel like i'm ", "i feel like i am ",
+        "everything feels ", "i don't know why i feel",
+        "i can't stop feeling", "i keep feeling",
+        "i'm so tired of ", "i'm exhausted",
+        "something is wrong and i", "i feel empty",
+        "i feel broken", "i feel numb", "i feel lost",
+        "i feel stuck", "i'm drowning", "i'm falling apart",
+        "nobody notices", "no one sees", "i keep waiting for someone",
+    )
+    if any(p in lower for p in emotional_phrases):
+        return "EMOTIONAL"
 
-PRACTICAL — They're trying to figure something out. The thought is about a situation, a decision, a problem. They want clarity, not necessarily to go deeper emotionally. Pushing into feelings or identity here too fast will feel intrusive.
-Signs: action-oriented language, external situation, "should I", "I need to", "I don't know what to do"
+    # --- Pass 2: LLM for ambiguous cases ---
+    system = """You classify thoughts into exactly one type. Output ONLY one word. Nothing else."""
 
-EMOTIONAL — They're carrying a feeling. The situation might be mentioned but it's not the point. They need to feel understood before anything else. Jumping to practical questions here will feel cold. Identity questions too early will feel like an interrogation.
-Signs: feeling words, tiredness, confusion, weight, something unresolved, "I don't know why I feel"
+    prompt = f"""Thought: "{thought}"
 
-SOCIAL/IDENTITY — They're questioning something about themselves or how they relate to others. Who they are, what they want, how they're seen, what they're becoming.
-Signs: comparison to others, self-judgment, belonging, "I feel like I should be", "I don't know who I am in this"
+Classify this thought. The key question: what does this person WANT right now?
 
-MIXED — The thought carries more than one layer and needs more than one type of question. This is common. Don't force a single type if the thought genuinely lives in two spaces.
+PRACTICAL — They want to figure something out, make a decision, or handle a situation.
+The thought is about an external problem: another person, a job, money, logistics, communication.
+Even if the situation is emotionally charged (like firing someone or saying no), it's PRACTICAL
+if the person is asking HOW to do something or WHAT to do. The subject is the situation, not their feelings.
+Example: "How to say no to an accountant I don't want to hire" → PRACTICAL (it's a communication problem)
+Example: "Should I take this job or stay" → PRACTICAL (it's a decision)
+Example: "I don't know what to say to my mom about the money" → PRACTICAL (it's about handling a conversation)
 
-Output ONLY one of these four words:
-PRACTICAL
-EMOTIONAL  
-SOCIAL
-MIXED
+EMOTIONAL — They're expressing an internal state. The situation may be mentioned but the SUBJECT is how they feel.
+The person isn't asking how to do something — they're telling you something is wrong inside.
+Example: "I feel like I'm disappearing" → EMOTIONAL
+Example: "Everything feels heavy and I don't know why" → EMOTIONAL
+Example: "I keep waiting for someone to notice I'm struggling" → EMOTIONAL
 
-Nothing else. No explanation."""
-    
+SOCIAL — They're questioning who they are in relation to others. Identity, belonging, how they're perceived.
+Example: "I said yes but I didn't actually want to" → SOCIAL (gap between authentic self and performed self)
+Example: "I don't know who I am around these people" → SOCIAL
+
+MIXED — Genuinely two layers with equal weight. Use sparingly — most thoughts have a dominant type.
+
+Output ONLY: PRACTICAL, EMOTIONAL, SOCIAL, or MIXED"""
+
     try:
         result = _chat(prompt, system=system).strip().upper()
-        # Extract just the type word
         for conv_type in ["PRACTICAL", "EMOTIONAL", "SOCIAL", "MIXED"]:
             if conv_type in result:
                 return conv_type
-        return "MIXED"  # Default fallback
+        return "MIXED"
     except Exception as e:
         logger.warning("Conversation type classification failed: %s", e)
         return "MIXED"
@@ -588,31 +643,159 @@ def get_reflection(thought: str, reflection_mode: str = "gentle", user_context: 
     # Step 2: Generate adaptive questions based on type
     adaptive_questions = _generate_adaptive_questions(thought, conversation_type, mode)
 
-    prompt = f'''Thought: "{thought}"
+    # Build the prompt based on conversation type.
+    # Each type has its own tone, examples, and banned words.
+    # The goal: the user reads the card and thinks "yes, exactly" — never "whoa, that's a lot."
+
+    if conversation_type == "PRACTICAL":
+        prompt = f'''Thought: "{thought}"
 
 {personalization_block}
 
-Create exactly 2 reflection sections. Speak TO them using "you."
-Be SHORT. Simple English only. Specific and subtle.
-One or two sentences per section maximum.
+TONE OVERRIDE — READ THIS FIRST:
+This person is thinking through a PRACTICAL problem. They wrote about a situation,
+a decision, or something they need to handle. They are NOT asking you to go deep.
+They want clarity. Respond like a sharp, direct friend who just heard them explain
+the situation over coffee.
+
+Match their register. If they wrote 10 casual words, respond in 10 casual words.
+If they were analytical, be analytical. Do NOT add emotional weight they didn't put there.
+
+BANNED in this response — do not use ANY of these:
+- Metaphors, imagery, or poetic phrasing of any kind
+- References to the body (weight, chest, shoulders, breath, gut)
+- Words: "weight", "hum", "beneath", "quiet", "carry", "hold", "sit with",
+  "space", "tender", "gentle", "ache", "wrestle", "protect", "unsaid"
+- Therapy language: "processing", "boundaries", "inner", "healing"
+- Any sentence that would sound strange if said out loud to a friend
+
+Create exactly 2 sections. One or two SHORT sentences each. Plain English.
 
 ## What This Feels Like
 ({lengths["feels_like"]})
-The feeling under the thought. Simple words.
-"You're..." or "This feels like..."
-Not a summary of what they wrote. The emotion underneath it.
-e.g. "You're holding something you haven't been able to set down."
+Reflect back the practical tension — what's making this annoying, tricky, or hard to just do.
+Sound like a smart friend who gets it, not a therapist naming a wound.
+e.g. "You know what you want to do. The annoying part is finding a way to say it without making it weird."
+e.g. "You've already decided — you're just looking for the right words."
 
 ## What's Underneath This
 ({lengths["believe"]})
-One quiet belief or assumption sitting under the thought.
-Something they didn't say directly but that's clearly there.
-"There's a belief here that..." or "Underneath this is..."
-One sentence. Slightly surprising. Not obvious.
-e.g. "There's a belief here that feeling it fully would make it more real."
+Go ONE practical layer deeper. Name the real concern — the thing they're actually weighing.
+Not a hidden emotion. A hidden calculation or priority they haven't stated.
+One sentence. Direct.
+e.g. "You don't want to burn a bridge you might need later."
+e.g. "The real question isn't whether to say no — it's how direct you can afford to be."
 
 OUTPUT FORMAT: Start each section with exactly ## SectionName.
-Use these exact headers:
+## What This Feels Like
+## What's Underneath This'''
+
+    elif conversation_type == "SOCIAL":
+        prompt = f'''Thought: "{thought}"
+
+{personalization_block}
+
+TONE: This person is navigating a SOCIAL or IDENTITY tension — the gap between
+what they did (or agreed to) and what they actually want. Respond warmly but
+without judgment. Name the tension without making them feel like a bad person.
+
+BANNED in this response:
+- Character judgments: "you're people-pleasing", "you're being fake", "you're afraid to be yourself"
+- Therapy labels: "codependent", "boundaries", "conflict avoidance", "attachment"
+- Anything that implies they're broken or performing — just name the gap they're living in
+
+Match their register. Keep it simple and human.
+
+Create exactly 2 sections. One or two SHORT sentences each.
+
+## What This Feels Like
+({lengths["feels_like"]})
+Name the social tension — the gap between what they said yes to and what they actually want,
+or between who they are and who they're being in this situation. No diagnosis. Just recognition.
+e.g. "You said yes and immediately wished you hadn't. Now you're stuck with it."
+e.g. "There's a gap between what you agreed to and what you actually want, and it's sitting there."
+
+## What's Underneath This
+({lengths["believe"]})
+Go one layer deeper into identity — what saying yes (or no) means about how they want to be seen.
+Not a hidden emotion. Something about who they're trying to be in this relationship or group.
+One sentence. Should feel like recognition, not exposure.
+e.g. "Saying no would mean being the person who lets people down, and you're not ready to be that."
+e.g. "You'd rather be uncomfortable than make someone else feel rejected."
+
+OUTPUT FORMAT: Start each section with exactly ## SectionName.
+## What This Feels Like
+## What's Underneath This'''
+
+    elif conversation_type == "EMOTIONAL":
+        prompt = f'''Thought: "{thought}"
+
+{personalization_block}
+
+TONE: This person is sharing something they're feeling. They need to feel met —
+not analyzed, not diagnosed, not impressed by your insight. Warm and simple.
+Like someone who heard them and said the right thing.
+
+BANNED in this response:
+- Clinical language: "pattern", "coping mechanism", "avoidance", "attachment style"
+- Sentences that start with "You have a pattern of..." or "What you're really saying is..."
+- Anything that would make them feel like a case study or feel ashamed
+- Over-reaching: don't go to the deepest possible interpretation. Go one step beneath what they said.
+
+Match their register. If they wrote softly, respond softly. If they wrote bluntly, match that.
+
+Create exactly 2 sections. One or two SHORT sentences each.
+
+## What This Feels Like
+({lengths["feels_like"]})
+Meet the feeling. Make them feel seen, not analyzed. One sentence that makes them think
+"yes, that's it." Like a friend who heard them and just... got it.
+e.g. "You're tired of being the one who has to say it out loud first."
+e.g. "You want someone to notice without you having to perform the struggle."
+
+## What's Underneath This
+({lengths["believe"]})
+Go one layer deeper — gently. A quiet recognition, not a psychological verdict.
+Something they know is true but haven't said. Should feel like being understood, not exposed.
+One sentence.
+e.g. "There's a part of you that thinks if you have to ask for help, it doesn't count."
+e.g. "You've been holding this alone long enough that it started to feel normal."
+
+OUTPUT FORMAT: Start each section with exactly ## SectionName.
+## What This Feels Like
+## What's Underneath This'''
+
+    else:  # MIXED
+        prompt = f'''Thought: "{thought}"
+
+{personalization_block}
+
+TONE: This thought has multiple layers. Read which layer is DOMINANT — the one they'd
+say first if you asked "what's this really about?" — and lead with that register.
+Keep it grounded. Don't try to address every layer. Pick the one that matters most
+and respond to THAT.
+
+BANNED: metaphors that need decoding, therapy language, character judgments,
+anything that would make them think "that's not what I meant."
+
+Match their register. Simple. Direct. Human.
+
+Create exactly 2 sections. One or two SHORT sentences each.
+
+## What This Feels Like
+({lengths["feels_like"]})
+Reflect back the dominant tension. Like a friend who heard the whole thing and said
+the one sentence that cuts to it.
+e.g. "You're trying to do the right thing but you're not sure what that is here."
+
+## What's Underneath This
+({lengths["believe"]})
+One layer deeper. Name the thing they're actually weighing or feeling — not the deepest
+possible interpretation. One step beneath what they said, no further.
+One sentence.
+e.g. "You want to be fair to everyone, but you haven't figured out what being fair to yourself looks like."
+
+OUTPUT FORMAT: Start each section with exactly ## SectionName.
 ## What This Feels Like
 ## What's Underneath This'''
 

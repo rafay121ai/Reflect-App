@@ -44,21 +44,6 @@ const SectionDivider = () => (
   <div className="border-t border-[#E2E8F0]/60 my-6" />
 );
 
-// Sentry test button — remove after verifying error tracking
-function ErrorButton() {
-  return (
-    <button
-      type="button"
-      onClick={() => {
-        throw new Error("This is your first error!");
-      }}
-      className="w-full py-2.5 px-4 text-sm rounded-lg border border-amber-200 text-amber-700 bg-amber-50/50 hover:bg-amber-50"
-    >
-      Break the world (test Sentry)
-    </button>
-  );
-}
-
 // Reflection mode selector
 const ReflectionModeSelector = ({ currentMode, onChange }) => {
   const modes = getAvailableModes();
@@ -701,13 +686,6 @@ const SettingsPanel = ({ apiBase, onClose, onOpenSignIn, usage, onRefetchUsage }
               )}
             </div>
           ) : null}
-
-          {process.env.NODE_ENV !== "production" && (
-            <div className="mt-6 pt-6 border-t border-[#E2E8F0]/60">
-              <p className="text-[12px] text-[#94A3B8] mb-2">Test Sentry</p>
-              <ErrorButton />
-            </div>
-          )}
 
           {/* Footer note */}
           <p className="text-[10px] text-[#94A3B8] text-center mt-6">
