@@ -89,6 +89,7 @@ export function useMirrorReport(options) {
     return () => {
       cancelled = true;
     };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [enabled, retryCount, apiBase, thought, questionsKey, answersKey, reflectionId, accessToken]);
 
   return { report, loading, error, retry };
