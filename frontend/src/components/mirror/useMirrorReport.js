@@ -1,10 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 
-/**
- * Fetches the 4-slide mirror report from POST /api/mirror/report (auth) or /api/mirror/report/guest (guest).
- * Call when user has finished answering questions; report is ready by the time they tap the mirror.
- * Exposes error and retry so the UI can show "Try again" on failure.
- */
 export function useMirrorReport(options) {
   const { enabled, apiBase, thought, questions, answers, reflectionId, accessToken } = options;
   const [report, setReport] = useState(null);
@@ -20,12 +15,37 @@ export function useMirrorReport(options) {
     setRetryCount((c) => c + 1);
   }, []);
 
+  // Reset when reflectionId changes so a new reflection always fetches fresh
   useEffect(() => {
-    if (!enabled || hasFetchedRef.current) return;
-    if (!apiBase || !thought?.trim()) return;
+    hasFetchedRef.current = false;
+    setReport(null);
+    setError(null);
+  }, [reflectionId]);
+
+  // Serialize arrays to stable strings so they don't cause referential re-runs
+  const answersKey = Array.isArray(answers) ? answers.join("||") : "";
+  const questionsKey = Array.isArray(questions) ? questions.join("||") : "";
+
+  useEffect(() => {
+    console.log("[mirror] effect ran", {
+      enabled,
+      hasFetched: hasFetchedRef.current,
+      answersKey,
+      thought: thought?.slice(0, 30),
+    });
+
+    if (!enabled || hasFetchedRef.current) {
+      console.log("[mirror] bailed — enabled:", enabled, "hasFetched:", hasFetchedRef.current);
+      return;
+    }
+    if (!apiBase || !thought?.trim()) {
+      console.log("[mirror] bailed — missing apiBase or thought");
+      return;
+    }
+
+    console.log("[mirror] FIRING FETCH, answers:", answersKey);
 
     const answersArr = Array.isArray(answers) ? answers : [];
-
     hasFetchedRef.current = true;
     let cancelled = false;
     setLoading(true);
@@ -52,9 +72,11 @@ export function useMirrorReport(options) {
         return res.json();
       })
       .then((data) => {
+        console.log("[mirror] fetch succeeded", data);
         if (!cancelled) setReport(data);
       })
       .catch((err) => {
+        console.error("[mirror] fetch failed", err);
         if (!cancelled) {
           hasFetchedRef.current = false;
           setError(err);
@@ -67,7 +89,7 @@ export function useMirrorReport(options) {
     return () => {
       cancelled = true;
     };
-  }, [enabled, retryCount, apiBase, thought, questions, answers, reflectionId, accessToken]);
+  }, [enabled, retryCount, apiBase, thought, questionsKey, answersKey, reflectionId, accessToken]);
 
   return { report, loading, error, retry };
 }

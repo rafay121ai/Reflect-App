@@ -199,6 +199,7 @@ const ReflectionFlow = ({
   const [currentStep, setCurrentStep] = useState(STEPS.JOURNEY);
   const [personalizedMirror, setPersonalizedMirror] = useState(null);
   const [questionResponses, setQuestionResponses] = useState([]);
+  const questionResponsesRef = useRef([]);
   const [closingText, setClosingText] = useState(null);
   const [isLoadingClosing, setIsLoadingClosing] = useState(false);
   /** 'come_back' | 'remind' | null – used to skip mark-opened and send revisit_type when saving */
@@ -238,7 +239,9 @@ const ReflectionFlow = ({
   };
 
   const handleQuestionsComplete = (responses) => {
-    setQuestionResponses(responses || []);
+    const safeResponses = responses || [];
+    questionResponsesRef.current = safeResponses;
+    setQuestionResponses(safeResponses);
     setMirrorReportEnabled(true);
     setCurrentStep(STEPS.MIRROR);
   };
@@ -389,7 +392,7 @@ const ReflectionFlow = ({
               apiBase={apiBase}
               originalThought={originalThought}
               questions={questions}
-              questionResponses={questionResponses}
+              questionResponses={questionResponsesRef.current}
               reflectionId={reflectionId}
               reflectionCount={reflectionCount}
               accessToken={accessToken}
