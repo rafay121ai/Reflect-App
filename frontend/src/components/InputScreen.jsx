@@ -1,6 +1,5 @@
 import { useState, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import AppLogo from "./AppLogo";
 import ReturnCard from "./ReturnCard";
 
 const DRAFT_KEY = "reflect_draft";
@@ -88,15 +87,6 @@ const InputScreen = ({ thought, setThought, onSubmit, isSubmitting = false, retu
     >
       {/* Header */}
       <div className="flex flex-col gap-4">
-        <motion.div
-          initial={{ opacity: 0, scale: 0.8 }}
-          animate={{ opacity: 1, scale: 1 }}
-          transition={{ delay: 0.2, duration: 0.5 }}
-          className="flex justify-center"
-        >
-          <AppLogo size="input" />
-        </motion.div>
-        
         <h1 
           className="text-3xl md:text-4xl lg:text-5xl font-light tracking-tight text-[#4A5568]"
           style={{ fontFamily: "'Fraunces', serif" }}
