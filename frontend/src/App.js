@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useMemo } from "react";
+import { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import "./App.css";
 import axios from "axios";
 import { AnimatePresence } from "framer-motion";
@@ -256,6 +256,20 @@ function App() {
     toast.success("You're signed in.");
   }, [user, showSignInModal, pendingSaveAfterSignIn]);
 
+  // Landing page "Start free" link: ?signup=1 opens the sign-in modal when not logged in
+  useEffect(() => {
+    if (loading || user) return;
+    if (typeof window === "undefined") return;
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("signup") === "1") {
+      setShowSignInModal(true);
+      params.delete("signup");
+      const search = params.toString();
+      const nextUrl = search ? `${window.location.pathname}?${search}` : window.location.pathname;
+      window.history.replaceState({}, document.title, nextUrl);
+    }
+  }, [loading, user]);
+
   // When user signs in, load history so My reflections and Settings show correct state
   useEffect(() => {
     if (!user?.id || !authRequired) return;
@@ -501,7 +515,7 @@ function App() {
     }
   };
 
-  const handleFetchMoodSuggestions = async (thought, mirrorText) => {
+  const handleFetchMoodSuggestions = useCallback(async (thought, mirrorText) => {
     try {
       const url = user ? `${API}/mood/suggest` : `${API}/mood/suggest/guest`;
       const config = user ? { headers: getAuthHeaders() } : {};
@@ -514,7 +528,7 @@ function App() {
       devError("Mood suggestions error:", error);
       return [];
     }
-  };
+  }, [user, API]);
 
   const handleGetClosing = async (moodWord, answers, personalizedMirror, callbacks = {}) => {
     const controller = new AbortController();
@@ -1149,6 +1163,13 @@ function App() {
       </div>
       )}
 
+      {/* App logo – top-right, horizontally aligned with the BookOpen button */}
+      {appState !== STATES.ONBOARDING && (
+        <div className="fixed top-4 right-4 z-30 flex items-center justify-center w-10 h-10">
+          <AppLogo size="sm" />
+        </div>
+      )}
+
       {insightsPanelOpen && (
         <AnimatePresence>
           <InsightsPanel apiBase={API} onClose={() => setInsightsPanelOpen(false)} />
@@ -1206,7 +1227,7 @@ function App() {
         </div>
       )}
 
-      <main className="max-w-2xl mx-auto px-6 md:px-8 py-12 md:py-16">
+      <main className="max-w-2xl mx-auto px-6 md:px-8 py-12 md:py-16 pb-20">
         <AnimatePresence mode="wait">
           {appState === STATES.VIEWING_REFLECTION && viewingReflectionId && (
             <ViewReflection
@@ -1347,14 +1368,14 @@ function App() {
 
       <footer
         className="fixed bottom-0 left-0 right-0 px-6 text-center"
-        style={{ background: "#FFFDF7", paddingTop: "12px", paddingBottom: "16px" }}
+        style={{ background: "#FFFDF7", paddingTop: "12px", paddingBottom: "16px", zIndex: 10 }}
       >
         <p className="text-xs text-[#A0AEC0] tracking-wide" data-testid="footer-disclaimer">
           This is a reflection space, not therapy. If you're in crisis, please reach out to a mental health professional.
         </p>
       </footer>
 
-      <CookieConsent />
+      <CookieConsent shouldShow={!!(user || getGuestCount() > 0)} />
     </div>
   );
 }

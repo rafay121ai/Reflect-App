@@ -577,14 +577,14 @@ const SettingsPanel = ({ apiBase, onClose, onOpenSignIn, usage, onRefetchUsage }
                 icon={ChevronRight}
                 label="Privacy Policy"
                 sublabel="How we use and protect your data"
-                href="https://reflect-web-one.vercel.app/privacy.html"
+                href="https://app.ireflect.app/privacy"
                 target="_blank"
               />
               <ActionRow
                 icon={ChevronRight}
                 label="Terms of Service"
                 sublabel="Terms of using REFLECT"
-                href="https://reflect-web-one.vercel.app/terms.html"
+                href="https://app.ireflect.app/terms"
                 target="_blank"
               />
               <ActionRow

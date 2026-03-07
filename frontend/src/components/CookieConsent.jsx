@@ -3,8 +3,10 @@ import { motion, AnimatePresence } from "framer-motion";
 
 const STORAGE_KEY = "reflect_cookie_consent";
 
-export default function CookieConsent() {
+// shouldShow: pass true only when user is signed in OR has completed a guest reflection
+export default function CookieConsent({ shouldShow = false }) {
   const [visible, setVisible] = useState(() => {
+    if (!shouldShow) return false;
     try {
       const val = window.localStorage.getItem(STORAGE_KEY);
       return val !== "accepted" && val !== "declined";
@@ -12,6 +14,18 @@ export default function CookieConsent() {
       return true;
     }
   });
+
+  // Re-evaluate if shouldShow flips to true after mount (e.g. user signs in mid-session)
+  const [prevShouldShow, setPrevShouldShow] = useState(shouldShow);
+  if (shouldShow && !prevShouldShow) {
+    setPrevShouldShow(true);
+    try {
+      const val = window.localStorage.getItem(STORAGE_KEY);
+      if (val !== "accepted" && val !== "declined") setVisible(true);
+    } catch {
+      setVisible(true);
+    }
+  }
 
   const handleAccept = () => {
     try { window.localStorage.setItem(STORAGE_KEY, "accepted"); } catch {}

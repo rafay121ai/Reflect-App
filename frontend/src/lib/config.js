@@ -6,7 +6,7 @@
 const RAILWAY_BACKEND_URL = "https://reflect-app-production.up.railway.app";
 
 export function getBackendUrl() {
-  if (typeof window !== "undefined" && window.location?.hostname?.includes("vercel.app")) {
+  if (typeof window !== "undefined" && (window.location?.hostname?.includes("vercel.app") || window.location?.hostname === "app.ireflect.app")) {
     return RAILWAY_BACKEND_URL;
   }
   if (process.env.REACT_APP_BACKEND_URL) {
