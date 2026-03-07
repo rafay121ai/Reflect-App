@@ -528,7 +528,7 @@ function App() {
       devError("Mood suggestions error:", error);
       return [];
     }
-  }, [user, API]);
+  }, [user]);
 
   const handleGetClosing = async (moodWord, answers, personalizedMirror, callbacks = {}) => {
     const controller = new AbortController();
