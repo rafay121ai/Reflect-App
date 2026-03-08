@@ -334,7 +334,13 @@ True but flat. The 10% poetic is what gives it an edge.
 
 The rule: say the plain thing first.
 Then if one image makes it sharper — use it.
-If it doesn't make it sharper — cut it.""",
+If it doesn't make it sharper — cut it.
+
+VOICE FOR THIS MODE:
+Take your time. Meet them before you reveal anything.
+The first sentence should feel like someone finally getting it.
+Warmth comes before sharpness here. Let them settle before
+you show them something true.""",
         "section_length": {
             "whats_here": "2-4 short sentences",
             "feels_like": "1-2 short sentences",
@@ -402,7 +408,13 @@ True but flat. The 10% poetic is what gives it an edge.
 
 The rule: say the plain thing first.
 Then if one image makes it sharper — use it.
-If it doesn't make it sharper — cut it.""",
+If it doesn't make it sharper — cut it.
+
+VOICE FOR THIS MODE:
+Say the thing first. No warmup.
+Short sentences. No easing in.
+If you can cut a word, cut it.
+The person came here for clarity, not comfort.""",
         "section_length": {
             "whats_here": "2-3 short sentences",
             "feels_like": "1 sentence",
@@ -470,7 +482,15 @@ True but flat. The 10% poetic is what gives it an edge.
 
 The rule: say the plain thing first.
 Then if one image makes it sharper — use it.
-If it doesn't make it sharper — cut it.""",
+If it doesn't make it sharper — cut it.
+
+VOICE FOR THIS MODE:
+Very few words. Long spaces between ideas.
+Don't fill the silence.
+One sentence where two would fit.
+What you leave out is as important as what you write.
+Write like someone who has been listening for a long time
+and only speaks when they're sure.""",
         "section_length": {
             "whats_here": "1-2 short sentences",
             "feels_like": "1 short sentence",
@@ -646,13 +666,27 @@ Rules that don't change regardless of type:
         
         if not questions:
             if conversation_type == "PRACTICAL":
-                questions = ["What's the actual situation here?", "What have you already considered?", "What are the real constraints?"]
+                questions = [
+                    "What's the actual situation — what needs to happen?",
+                    "What have you already tried or considered?",
+                    "What's the real constraint here?",
+                ]
             elif conversation_type == "EMOTIONAL":
-                questions = ["What's the feeling underneath this?", "Is this more like X or more like Y?"]
+                questions = [
+                    "Is this more like exhaustion or more like disappointment?",
+                    "How long have you been carrying this?",
+                ]
             elif conversation_type == "SOCIAL":
-                questions = ["What does this say about who you are in this?", "What are you protecting here?"]
-            else:
-                questions = ["What's really going on here?", "How does this feel?", "What does this say about you?"]
+                questions = [
+                    "What did saying yes (or no) cost you?",
+                    "Who are you trying to be in this — and is that who you actually are?",
+                ]
+            else:  # MIXED
+                questions = [
+                    "What's the part of this you haven't said out loud yet?",
+                    "What would you do if no one was watching?",
+                    "What does this say about what you actually want?",
+                ]
         
         max_q = config["questions_count"]
         return questions[:max_q] if len(questions) > max_q else questions
@@ -1102,15 +1136,7 @@ def get_mirror_report(
     else:
         answer_signal = "DESCRIPTIVE"
 
-    # Build archetype list for selection
-    archetype_list = "\n".join([
-        f"{i+1}. {a['name']}\n"
-        f"   {a['description']}\n"
-        f"   Traits: {', '.join(a['traits'])}"
-        for i, a in enumerate(ARCHETYPES)
-    ])
-    
-    # Stage 1: Select archetype
+    # Stage 1: Select archetype (two-stage: narrow to 5, then pick from 5)
     archetype_system = """You match people to archetypes 
 based on the pattern underneath their words.
 
@@ -1140,20 +1166,77 @@ The answers are often more honest than the thought.
 Output ONLY valid JSON. No markdown. No explanation.
 {"archetype_number": 3}"""
 
+    # Build short archetype list (name + one-line description only)
+    archetype_short_list = "\n".join([
+        f"{i+1}. {a['name']}: {a['description']}"
+        for i, a in enumerate(ARCHETYPES)
+    ])
+
+    narrow_prompt = f"""The person wrote:
+"{thought}"
+
+They answered:
+{qa_text}
+
+{f"Prior context (secondary signal only): {personalization_block}" if personalization_block else "No prior history — base selection on emotional truth and answers only."}
+
+Here are all available archetypes (name + one-line description):
+{archetype_short_list}
+
+Your job: identify the 5 archetypes that could plausibly fit this person
+based on the emotional truth and pattern underneath what they wrote.
+Not surface topic. Not writing style. The belief system and tension underneath.
+
+Output ONLY valid JSON. No markdown. No explanation.
+{{"candidates": [3, 7, 12, 15, 18]}}"""
+
+    try:
+        raw_narrow = _chat(narrow_prompt, system=archetype_system, max_tokens=30).strip()
+        if raw_narrow.startswith("```"):
+            raw_narrow = raw_narrow.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
+        narrow_data = json.loads(raw_narrow)
+        candidate_indices = [
+            max(0, min(int(n) - 1, len(ARCHETYPES) - 1))
+            for n in (narrow_data.get("candidates") or [])[:5]
+        ]
+        if not candidate_indices:
+            raise ValueError("empty candidates")
+    except Exception as e:
+        logger.warning("Archetype narrowing failed (%s), falling back to full list", type(e).__name__)
+        candidate_indices = list(range(len(ARCHETYPES)))
+
+    # Use only candidate archetypes for final selection
+    candidate_archetypes = [ARCHETYPES[i] for i in candidate_indices]
+    archetype_list = "\n".join([
+        f"{candidate_indices[i]+1}. {a['name']}\n"
+        f"   {a['description']}\n"
+        f"   Traits: {', '.join(a['traits'])}"
+        for i, a in enumerate(candidate_archetypes)
+    ])
+
     archetype_prompt = f"""The person wrote this thought:
 "{thought}"
 
 They answered these questions:
 {qa_text}
 
-{personalization_block if personalization_block else ""}
+{f"Background context from their previous reflections (use as secondary signal only — do NOT let this override what they revealed today):{chr(10)}{personalization_block}" if personalization_block else "No prior history. Base your selection entirely on the emotional truth, word choice, and what they revealed in their answers above — not on writing style or tone alone."}
 
 Available archetypes:
 {archetype_list}
 
-Read everything carefully. Which archetype fits most precisely?
-Not which fits best in general — which fits THIS person 
-based on HOW they wrote and what they revealed in their answers.
+Your job:
+Read the emotional truth underneath what they wrote — not the surface event, not the writing style.
+Ask yourself:
+- What does this person BELIEVE about themselves based on what they revealed?
+- What is the core tension or pattern in how they relate to this situation?
+- What are they NOT saying but clearly carrying?
+
+The correct archetype fits the PATTERN underneath, not the topic or mood.
+If the thought is emotionally charged or extreme, that charge is data — read what it reveals about how this person processes and relates to the world.
+
+Which archetype fits most precisely?
+Not which fits best in general — which fits THIS person based on what they revealed.
 
 Output ONLY: {{"archetype_number": N}}"""
 
@@ -1317,7 +1400,7 @@ Output format:
 }}"""
 
     try:
-        raw = _chat(report_prompt, system=report_system, max_tokens=600).strip()
+        raw = _chat(report_prompt, system=report_system, max_tokens=800).strip()
         if raw.startswith("```"):
             raw = raw.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
         if "{" in raw and "}" in raw:
@@ -1520,7 +1603,7 @@ CRITICAL CHECKS before outputting:
 6. Under 70 words total? If not — cut ruthlessly."""
 
     try:
-        result = _chat(prompt, system=system, max_tokens=300).strip()
+        result = _chat(prompt, system=system, max_tokens=400).strip()
         if result and len(result) > 0:
             return result
     except Exception as e:
@@ -1544,7 +1627,10 @@ Keys required:
 - recurring_phrases: 1-3 exact short phrases or words the person used
   that feel loaded or significant (copy them exactly from their text)
 - core_tension: one sentence — the central unresolved conflict or
-  contradiction in what they shared
+  contradiction in what they shared. Must be specific to this person,
+  never generic.
+  Good: 'She wants to be chosen but refuses to show she wants it.'
+  Bad: 'They are struggling with uncertainty about the future.'
 - unresolved_threads: 1-3 things they raised but didn't conclude
 - self_beliefs: 1-2 beliefs about themselves implicit in what they wrote
   (e.g. "feeling things differently makes me an outsider")
@@ -1637,7 +1723,8 @@ Based on what they wrote and how their reflection landed, suggest 4-5 metaphor p
 
 Each suggestion needs:
 - **phrase**: 2-4 words, concrete image or scene (not emotions like "sad" or "anxious")
-- **description**: One sentence explaining what this phrase often points to
+- **description**: One short sentence, maximum 15 words, explaining what this phrase
+  often points to. Never longer than 15 words.
 
 Quality standards:
 - Phrases should be SPECIFIC to the tone/content of their thought and mirror
@@ -1660,7 +1747,7 @@ Return ONLY a JSON array, nothing else:
 [{{"phrase": "...", "description": "..."}}, ...]"""
 
     try:
-        raw = _chat(prompt, system=system, max_tokens=150).strip()
+        raw = _chat(prompt, system=system, max_tokens=600).strip()
         if not raw:
             return MOOD_SUGGESTIONS_FALLBACK
         if raw.startswith("```"):
@@ -1912,7 +1999,11 @@ Rules:
 - Never use the words: journey, process, growth, healing, reflect, pattern, cope, navigate
 - The last line must be about who they ARE, not what they should do
 - Plain language. Nothing needs decoding.
-- 3-4 lines total. Hard limit."""
+- 3-4 lines total. Hard limit.
+- If you are not certain a named anchor (person, study, concept) is real
+and verifiable, choose a different anchor. Never invent or approximate.
+A wrong anchor destroys trust. When in doubt, use a well-known named
+psychological concept rather than a specific study."""
 
     prompt = f"""Based on this person's reflection data, write a return card.
 

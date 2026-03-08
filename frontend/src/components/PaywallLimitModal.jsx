@@ -128,6 +128,9 @@ export default function PaywallLimitModal({ onUpgrade, onDismiss }) {
               Maybe later
             </button>
           </div>
+          <p className="text-xs text-[#94A3B8] text-center mt-3 leading-relaxed">
+            14-day refund policy. Cancel anytime via Settings.
+          </p>
         </div>
       </motion.div>
     </div>

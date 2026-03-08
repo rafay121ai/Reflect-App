@@ -665,6 +665,11 @@ const SettingsPanel = ({ apiBase, onClose, onOpenSignIn, usage, onRefetchUsage }
                   <p className="text-sm text-red-600/90 mb-3">
                     This will permanently delete your account and all reflections. This cannot be undone.
                   </p>
+                  <p className="text-sm text-[#64748B] mb-3">
+                    Note: Deleting your account does not cancel your subscription.
+                    Cancel your subscription first via Settings → Manage Subscription,
+                    otherwise you will continue to be charged.
+                  </p>
                   <div className="flex items-center gap-3">
                     <button
                       type="button"
