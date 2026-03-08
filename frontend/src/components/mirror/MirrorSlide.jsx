@@ -151,7 +151,7 @@ export default function MirrorSlide({
                 fontFamily: "inherit",
               }}
             >
-              you are
+              right now, you are
             </motion.div>
             <motion.div
               variants={lineVariants}
@@ -185,6 +185,18 @@ export default function MirrorSlide({
                 {i < descriptionSentences.length - 1 ? ". " : ""}
               </motion.div>
             ))}
+            <p
+              style={{
+                fontSize: "13px",
+                color: "rgba(255,255,255,0.45)",
+                marginTop: "16px",
+                lineHeight: "1.5",
+                fontStyle: "italic",
+              }}
+            >
+              This is the pattern underneath this thought.
+              Reflect more to see what keeps appearing.
+            </p>
           </>
         ) : (
           contentLines.map((line, i) => (

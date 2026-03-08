@@ -263,11 +263,17 @@ def _build_personalization_block(
     block = "What you know about this person from their history:\n"
     block += "\n".join(f"- {line}" for line in lines)
     block += (
-        "\n\nLet this inform your depth and specificity. "
-        "Do NOT say 'I see you've mentioned X before' or reference past "
-        "reflections explicitly. "
-        "Use their own phrases back to them naturally when it fits. "
-        "The goal: make them feel genuinely known, not just heard."
+        "\n\nIMPORTANT: This history is background context only. "
+        "It tells you who this person is across time — but TODAY'S thought "
+        "and answers are the primary signal. "
+        "If today's thought is emotionally distinct from their history "
+        "(different topic, different intensity, different relationship), "
+        "trust today's writing over the historical pattern. "
+        "Never let prior themes pull the reading away from what they "
+        "actually revealed right now. "
+        "Use history only to add depth and specificity — not to override. "
+        "Do NOT reference past reflections explicitly. "
+        "Use their own phrases back to them naturally when it fits."
     )
     return block
 
@@ -1220,7 +1226,14 @@ Output ONLY valid JSON. No markdown. No explanation.
 They answered these questions:
 {qa_text}
 
-{f"Background context from their previous reflections (use as secondary signal only — do NOT let this override what they revealed today):{chr(10)}{personalization_block}" if personalization_block else "No prior history. Base your selection entirely on the emotional truth, word choice, and what they revealed in their answers above — not on writing style or tone alone."}
+{f"Background context from previous reflections — "
+  "SECONDARY SIGNAL ONLY. Today's thought and answers are PRIMARY. "
+  "If today's emotional content is different from their history "
+  "(different relationship, different intensity, different topic), "
+  "the archetype must reflect TODAY, not the historical average. "
+  "A person who usually reflects on work stress but today writes "
+  "about relationship betrayal is NOT a work-stress archetype today:"
+  f"{chr(10)}{personalization_block}" if personalization_block else "No prior history. Base your selection entirely on the emotional truth, word choice, and what they revealed in their answers above — not on writing style or tone alone."}
 
 Available archetypes:
 {archetype_list}
