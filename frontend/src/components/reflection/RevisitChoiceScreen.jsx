@@ -24,7 +24,7 @@ const RevisitChoiceScreen = ({
       animate={{ opacity: 1, y: 0, scale: 1 }}
       exit={{ opacity: 0, y: -20, scale: 0.95 }}
       transition={{ duration: 0.6, ease: [0.22, 1, 0.36, 1] }}
-      className="w-full max-w-lg"
+      className="w-full max-w-lg pt-16"
       data-testid="revisit-choice-screen"
     >
       {/* Card - same structure as ReflectionDisplay steps (e.g. EmotionalUndercurrent) */}
