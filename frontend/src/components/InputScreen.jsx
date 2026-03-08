@@ -86,7 +86,7 @@ const InputScreen = ({ thought, setThought, onSubmit, isSubmitting = false, retu
       data-testid="input-screen"
     >
       {/* Header */}
-      <div className="flex flex-col gap-4">
+      <div className="flex flex-col gap-4" style={{ paddingTop: "72px" }}>
         <h1 
           className="text-3xl md:text-4xl lg:text-5xl font-light tracking-tight text-[#4A5568]"
           style={{ fontFamily: "'Fraunces', serif" }}
