@@ -292,18 +292,18 @@ const ReflectionFlow = ({
     return sections.find(s => s.title.toLowerCase().includes(keyword.toLowerCase())) || { title: "", content: "" };
   };
 
-  const questionsSection = findSection("Notice") || findSection("Questions") || findSection("Some Things to Notice");
-  // Parse questions
+  // Parse questions (backend may return 1–3 depending on reflection mode: quiet=1, direct=2, gentle=3)
   const parseQuestions = (content) => {
-    if (!content) return ["What do you notice right now?", "What feels most important?", "What do you need?"];
+    const fallback = ["What do you notice right now?", "What feels most important?", "What do you need?"];
+    if (!content) return fallback;
     const lines = content.split('\n').filter(line => line.trim());
     const questions = lines
       .map(line => line.replace(/^[-•*\d.]\s*/, '').trim())
-      .filter(q => q.length > 5 && q.includes('?'))
-      .slice(0, 3);
-    return questions.length >= 3 ? questions : ["What do you notice right now?", "What feels most important?", "What do you need?"];
+      .filter(q => q.length > 5 && q.includes('?'));
+    return questions.length > 0 ? questions : fallback;
   };
 
+  const questionsSection = findSection("Notice") || findSection("Questions") || findSection("Some Things to Notice");
   const questions = parseQuestions(questionsSection.content);
 
   const handleJourneyComplete = () => {
