@@ -145,21 +145,23 @@ def _get_supabase_client():
 def is_duplicate_event(event_id: str) -> bool:
     """
     Returns True if this event has already been processed.
-    Fails CLOSED — if we cannot verify, treat as duplicate
-    to prevent replay attacks.
+    When Supabase is unavailable or the check fails, we fail OPEN (return False)
+    so the webhook is processed rather than dropped. Tradeoff: a brief Supabase
+    outage could allow a duplicate event to be processed twice; failing closed
+    would leave paying users stuck on trial when webhooks are dropped.
     """
     if not event_id:
         return False
     try:
         client = _get_supabase_client()
         if not client:
-            logger.warning("is_duplicate_event: no supabase client — failing closed")
-            return True  # fail closed
+            logger.warning("is_duplicate_event: no Supabase client — failing open (process event)")
+            return False
         result = client.table("webhook_events").select("id").eq("event_id", event_id).limit(1).execute()
         return bool(result.data)
     except Exception as e:
-        logger.warning("is_duplicate_event check failed (%s) — failing closed", type(e).__name__)
-        return True  # fail closed on any error
+        logger.warning("is_duplicate_event check failed (%s) — failing open (process event)", type(e).__name__)
+        return False
 
 
 def record_event(event_id: str, event_name: str) -> None:
@@ -179,4 +181,52 @@ def record_event(event_id: str, event_name: str) -> None:
     except Exception:
         # Best-effort; ignore failures
         pass
+
+
+def fetch_subscription_plan_by_email(email: str) -> tuple[str | None, str | None]:
+    """
+    Call Lemon Squeezy API to get current subscription plan for this email.
+    Returns (plan_type, status) e.g. ("monthly", "active") or (None, None) if no active subscription.
+    Uses LEMONSQUEEZY_API_KEY or LEMON_SQUEEZY_API_KEY.
+    """
+    api_key = (os.getenv("LEMONSQUEEZY_API_KEY") or os.getenv("LEMON_SQUEEZY_API_KEY") or "").strip()
+    if not api_key or not (email or "").strip():
+        return (None, None)
+    import urllib.parse
+    try:
+        import urllib.request
+        encoded = urllib.parse.quote(email.strip(), safe="")
+        url = f"https://api.lemonsqueezy.com/v1/subscriptions?filter[user_email]={encoded}"
+        req = urllib.request.Request(
+            url,
+            headers={
+                "Accept": "application/vnd.api+json",
+                "Authorization": f"Bearer {api_key}",
+            },
+            method="GET",
+        )
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            if resp.status != 200:
+                return (None, None)
+            data = resp.read().decode("utf-8")
+    except Exception as e:
+        logger.warning("Lemon Squeezy API fetch_subscription_plan_by_email failed: %s", e)
+        return (None, None)
+    try:
+        import json
+        body = json.loads(data)
+        items = (body.get("data") or []) if isinstance(body, dict) else []
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            attrs = item.get("attributes") or {}
+            status = (attrs.get("status") or "").strip().lower()
+            if status == "active":
+                variant_id = str(attrs.get("variant_id") or "").strip()
+                plan_type = VARIANT_TO_PLAN.get(variant_id, "monthly")
+                return (plan_type, status)
+        return (None, None)
+    except Exception as e:
+        logger.warning("Lemon Squeezy API parse response failed: %s", e)
+        return (None, None)
 

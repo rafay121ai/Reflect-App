@@ -62,6 +62,21 @@ def get_user_usage(user_id: str) -> dict | None:
     return None
 
 
+def list_user_usage_user_ids(limit: int = 10000) -> list[str]:
+    """Return list of user_id from user_usage (for admin sync)."""
+    client = _get_client()
+    if not client:
+        return []
+    try:
+        response = client.table("user_usage").select("user_id").limit(limit).execute()
+        if not response.data:
+            return []
+        return [str(r.get("user_id") or "").strip() for r in response.data if r.get("user_id")]
+    except Exception as e:
+        logger.exception("Supabase list_user_usage_user_ids failed: %s", e)
+        return []
+
+
 def update_user_plan(user_id: str, plan_type: str) -> bool:
     """
     Set or update user_usage plan (e.g. from Lemon Squeezy webhook).
@@ -749,6 +764,9 @@ def get_reflections_for_return_card(user_id: str, current_reflection_id: str | N
 
 # ----- Saved reflections (history + open later) -----
 
+# Kept for admin/manual use only. Removed from list read path to avoid deleting user data
+# without disclosure; was previously called before every history list and deleted all
+# saved_reflections older than 7 days.
 def _cleanup_old_saved_reflections():
     """Delete all saved_reflections older than 7 days (by created_at). Opened or unopened."""
     client = _get_client()
@@ -762,6 +780,11 @@ def _cleanup_old_saved_reflections():
         logger.warning("Supabase cleanup_old_saved_reflections failed: %s", e)
 
 
+def cleanup_old_saved_reflections():
+    """Public entry point for admin-only manual cleanup. See _cleanup_old_saved_reflections."""
+    _cleanup_old_saved_reflections()
+
+
 def insert_saved_reflection(
     user_identifier: str,
     raw_text: str,
@@ -770,9 +793,12 @@ def insert_saved_reflection(
     mood_word: str | None = None,
     revisit_type: str | None = None,
 ) -> str | None:
-    """Insert a completed reflection into history. revisit_type: 'come_back' | 'remind' | None. Returns id or None."""
+    """Insert a completed reflection into history. revisit_type: 'come_back' | 'remind' | None.
+    Returns the new row id on success, or None on failure (client missing, insert error).
+    Callers must treat None as failure and must not return success to the client."""
     client = _get_client()
     if not client:
+        logger.warning("insert_saved_reflection: no Supabase client")
         return None
     try:
         row = {
@@ -789,6 +815,7 @@ def insert_saved_reflection(
         response = client.table("saved_reflections").insert(row).execute()
         if response.data and len(response.data) > 0:
             return response.data[0].get("id")
+        logger.warning("insert_saved_reflection: insert returned no data")
     except Exception as e:
         logger.exception("Supabase insert_saved_reflection failed: %s", e)
     return None
@@ -855,8 +882,7 @@ def mark_saved_reflection_opened(saved_id: str) -> bool:
 
 
 def list_saved_reflections_waiting(user_identifier: str) -> list[dict]:
-    """List saved reflections with status='waiting' for this user. Runs cleanup first."""
-    _cleanup_old_saved_reflections()
+    """List saved reflections with status='waiting' for this user."""
     client = _get_client()
     if not client:
         return []
@@ -869,8 +895,7 @@ def list_saved_reflections_waiting(user_identifier: str) -> list[dict]:
 
 
 def list_saved_reflections_all(user_identifier: str) -> list[dict]:
-    """List all saved reflections for this user, created_at DESC. Runs cleanup first."""
-    _cleanup_old_saved_reflections()
+    """List all saved reflections for this user, created_at DESC."""
     client = _get_client()
     if not client:
         return []

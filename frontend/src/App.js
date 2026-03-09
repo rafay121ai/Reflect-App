@@ -69,6 +69,7 @@ function App() {
   const [settingsPanelOpen, setSettingsPanelOpen] = useState(false);
   const [betaFeedbackPanelOpen, setBetaFeedbackPanelOpen] = useState(false);
   const [historyLoading, setHistoryLoading] = useState(false);
+  const [historyError, setHistoryError] = useState(false);
   const [historyAll, setHistoryAll] = useState([]);
   const [revisitBannerHidden, setRevisitBannerHidden] = useState(false);
   const [showSignInModal, setShowSignInModal] = useState(false);
@@ -79,6 +80,7 @@ function App() {
   const [guestSignupStage, setGuestSignupStage] = useState(null); // "soft" | "firm" | "hard_block" | null
   const [showGuestSignupModal, setShowGuestSignupModal] = useState(false);
   const [usage, setUsage] = useState(null);
+  const [usageError, setUsageError] = useState(false);
   const [showTrialWelcome, setShowTrialWelcome] = useState(false);
   const [showTrialBanner, setShowTrialBanner] = useState(false);
   const [trialBannerMessage, setTrialBannerMessage] = useState("");
@@ -124,6 +126,8 @@ function App() {
     setPendingSaveAfterSignIn(null);
     setAppState(STATES.INPUT);
     setHistoryDropdownOpen(false);
+    setHistoryError(false);
+    setUsageError(false);
     setInsightsPanelOpen(false);
     setSettingsPanelOpen(false);
     setBetaFeedbackPanelOpen(false);
@@ -275,8 +279,11 @@ function App() {
     if (!user?.id || !authRequired) return;
     axios
       .get(`${API}/history`, { headers: getAuthHeaders() })
-      .then((res) => setHistoryAll(Array.isArray(res.data?.items) ? res.data.items : []))
-      .catch(() => setHistoryAll([]));
+      .then((res) => {
+        setHistoryAll(Array.isArray(res.data?.items) ? res.data.items : []);
+        setHistoryError(false);
+      })
+      .catch(() => setHistoryError(true));
   }, [user?.id, authRequired]);
 
   // When user signs in, fetch usage (plan / trial info)
@@ -284,8 +291,11 @@ function App() {
     if (!user?.id || !authRequired) return;
     axios
       .get(`${API}/usage`, { headers: getAuthHeaders() })
-      .then((res) => setUsage(res.data || null))
-      .catch(() => setUsage(null));
+      .then((res) => {
+        setUsage(res.data || null);
+        setUsageError(false);
+      })
+      .catch(() => setUsageError(true));
   }, [user?.id, authRequired]);
 
   // Refetch usage when opening Settings so web LS subscription state is up to date
@@ -293,8 +303,11 @@ function App() {
     if (!user?.id || !authRequired) return;
     axios
       .get(`${API}/usage`, { headers: getAuthHeaders() })
-      .then((res) => setUsage(res.data || null))
-      .catch(() => setUsage(null));
+      .then((res) => {
+        setUsage(res.data || null);
+        setUsageError(false);
+      })
+      .catch(() => setUsageError(true));
   };
 
   // Show trial welcome modal once when coming from ?welcome=trial
@@ -543,7 +556,6 @@ function App() {
         answers: Array.isArray(answers) ? answers.map(a => a.response || a) : answers,
         mirror_response: personalizedMirror || "",
         mood_word: moodWord || null,
-        ...(user && reflection?.id && { reflection_id: reflection.id }),
         reflection_mode: getReflectionMode(),
       }, config);
 
@@ -561,7 +573,8 @@ function App() {
         devError("Closing generation error:", error);
         toast.error("We couldn't load your reflection. Try again.");
       }
-      const fallback = "You showed up today. That matters. Between now and next time — notice what you're already carrying. It's worth your attention.";
+      console.warn("Closing API failed; using fallback message.", error?.response?.status ?? error?.message);
+      const fallback = "You took time for yourself today. That's enough.";
       setClosingText(fallback);
       return fallback;
     } finally {
@@ -614,17 +627,23 @@ function App() {
     if (revisitType === "come_back" || revisitType === "remind") body.revisit_type = revisitType;
     const res = await axios.post(`${API}/history`, body, { headers: getAuthHeaders() });
     const savedId = res.data?.id;
-    if (savedId && markOpened) {
+    if (!savedId) {
+      throw new Error("Save returned no id");
+    }
+    if (markOpened) {
       await axios.patch(`${API}/history/${savedId}/mark-opened`, {}, { headers: getAuthHeaders() }).catch(() => {});
     }
   };
 
   const refetchHistory = () => {
-    if (!user) return;
-    axios
+    if (!user) return Promise.resolve();
+    return axios
       .get(`${API}/history`, { headers: getAuthHeaders() })
-      .then((res) => setHistoryAll(Array.isArray(res.data?.items) ? res.data.items : []))
-      .catch(() => setHistoryAll([]));
+      .then((res) => {
+        setHistoryAll(Array.isArray(res.data?.items) ? res.data.items : []);
+        setHistoryError(false);
+      })
+      .catch(() => setHistoryError(true));
   };
 
   const handleSaveHistory = async (rawText, answers, mirrorResponse, moodWord, options = {}) => {
@@ -649,7 +668,7 @@ function App() {
       if (err.response?.status === 401) {
         toast.error("Session invalid. Sign out and sign in again from Settings, or check backend SUPABASE_JWT_SECRET.");
       } else {
-        toast.error("Could not save reflection. Try again.");
+        toast.error("We couldn't save this reflection. Please try again.");
       }
     }
   };
@@ -707,8 +726,11 @@ function App() {
       setHistoryLoading(true);
       axios
         .get(`${API}/history`, { headers: getAuthHeaders() })
-        .then((res) => setHistoryAll(Array.isArray(res.data?.items) ? res.data.items : []))
-        .catch(() => setHistoryAll([]))
+        .then((res) => {
+          setHistoryAll(Array.isArray(res.data?.items) ? res.data.items : []);
+          setHistoryError(false);
+        })
+        .catch(() => setHistoryError(true))
         .finally(() => setHistoryLoading(false));
     }
   };
@@ -1044,7 +1066,7 @@ function App() {
               <div className="px-4 py-3 border-b border-[#E2E8F0] shrink-0">
                 <h2 className="text-sm font-medium text-[#4A5568]">My reflections</h2>
               </div>
-              {reflectionInsight && historyAll.length > 0 && (
+              {reflectionInsight && historyAll.length > 0 && !historyError && (
                 <div style={{ padding: "12px 16px 8px 16px" }}>
                   <p style={{ fontSize: 11, color: "#718096", fontStyle: "italic", margin: 0, lineHeight: 1.5 }}>
                     {reflectionInsight.observation}
@@ -1083,6 +1105,22 @@ function App() {
                       className="py-2 px-4 text-sm font-medium text-[#4A5568] bg-[#FFB4A9]/20 hover:bg-[#FFB4A9]/30 rounded-lg transition-colors"
                     >
                       Sign in
+                    </button>
+                  </div>
+                ) : historyError ? (
+                  <div className="py-4 px-4 flex flex-col items-center gap-3 text-center">
+                    <p className="text-sm text-[#718096]">
+                      We couldn't load your reflections right now. They're still saved — please try again later.
+                    </p>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setHistoryLoading(true);
+                        refetchHistory().finally(() => setHistoryLoading(false));
+                      }}
+                      className="py-2 px-4 text-sm font-medium text-[#4A5568] bg-[#FFB4A9]/20 hover:bg-[#FFB4A9]/30 rounded-lg transition-colors"
+                    >
+                      Try again
                     </button>
                   </div>
                 ) : historyAll.length === 0 ? (
@@ -1227,6 +1265,21 @@ function App() {
         </div>
       )}
 
+      {usageError && user && authRequired && (
+        <div className="sticky top-0 z-20 mx-auto max-w-2xl px-6 py-2.5 flex items-center justify-between gap-3 bg-[#E2E8F0]/80 text-[#64748B] border-b border-[#CBD5E1]/60">
+          <p className="text-sm">
+            We couldn't verify your plan right now. Try refreshing.
+          </p>
+          <button
+            type="button"
+            onClick={() => refetchUsage()}
+            className="text-xs font-medium text-[#4A5568] hover:text-[#2D3748] shrink-0"
+          >
+            Refresh
+          </button>
+        </div>
+      )}
+
       <main className="max-w-2xl mx-auto px-6 md:px-8 py-12 md:py-16 pb-20">
         <AnimatePresence mode="wait">
           {appState === STATES.VIEWING_REFLECTION && viewingReflectionId && (
@@ -1319,7 +1372,7 @@ function App() {
                 flowMode={reflection?.flowMode || "standard"}
                 onGetPersonalizedMirror={handleGetPersonalizedMirror}
                 onFetchMoodSuggestions={handleFetchMoodSuggestions}
-                onMoodSubmit={user ? handleMoodSubmit : undefined}
+                onMoodSubmit={undefined}
                 onSaveHistory={user ? handleSaveHistory : undefined}
                 onGetClosing={handleGetClosing}
                 onComeBackLater={handleComeBackLater}

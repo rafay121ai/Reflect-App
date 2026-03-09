@@ -34,7 +34,7 @@ function MirrorStepBlock({
     thought: originalThought,
     questions,
     answers: (questionResponses || []).map((r) => r?.response ?? ""),
-    reflectionId,
+    reflectionId: null,
     accessToken,
     enabled: mirrorReportEnabled,
   });
@@ -325,23 +325,10 @@ const ReflectionFlow = ({
 
   const handleMoodDone = (moodWord) => {
     setLastMoodWord(moodWord || null);
-    // Save history in background (don't await/block)
-    if (onSaveHistory && originalThought && personalizedMirror != null) {
-      const answers = Array.isArray(questionResponses)
-        ? questionResponses.map((r) => ({ question: r?.question ?? "", response: r?.response ?? "" }))
-        : [];
-      const markOpened = userChoseRevisitType == null;
-      onSaveHistory(originalThought.trim(), answers, personalizedMirror, moodWord || null, {
-        markOpened,
-        revisitType: userChoseRevisitType || null,
-      });
-      setUserChoseRevisitType(null);
-    }
-    
-    // Move to closing step and fetch closing text
+    // Do not save to history here — only when user explicitly completes closing (single write at end).
     setCurrentStep(STEPS.CLOSING);
     setIsLoadingClosing(true);
-    
+
     if (onGetClosing) {
       const answers = Array.isArray(questionResponses)
         ? questionResponses.map((r) => ({ question: r?.question ?? "", response: r?.response ?? "" }))
@@ -527,6 +514,18 @@ const ReflectionFlow = ({
                 isLoading={isLoadingClosing}
                 isSlowClosing={isSlowClosing}
                 onDone={() => {
+                  // Single Supabase write: save to history only when user explicitly completes the flow.
+                  if (onSaveHistory && originalThought && personalizedMirror != null) {
+                    const answers = Array.isArray(questionResponses)
+                      ? questionResponses.map((r) => ({ question: r?.question ?? "", response: r?.response ?? "" }))
+                      : [];
+                    const markOpened = userChoseRevisitType == null;
+                    onSaveHistory(originalThought.trim(), answers, personalizedMirror, lastMoodWord || null, {
+                      markOpened,
+                      revisitType: userChoseRevisitType || null,
+                    });
+                    setUserChoseRevisitType(null);
+                  }
                   if (onReflectionComplete && originalThought && personalizedMirror != null) {
                     onReflectionComplete({
                       thought: originalThought.trim(),
@@ -535,7 +534,6 @@ const ReflectionFlow = ({
                       closing: closingText || "",
                     });
                   }
-                  // Trigger existing app completion flow
                   if (onReflectAnother) {
                     onReflectAnother();
                   } else if (onStartFresh) {

@@ -71,7 +71,7 @@ export default function TermsOfService() {
               If you are not satisfied with your purchase, you may request a full
               refund within 14 days of your original payment date, no questions
               asked. To request a refund, email{" "}
-              <a href="mailto:support@reflectapp.com">support@reflectapp.com</a>{" "}
+              <a href="mailto:essanirafay@gmail.com">essanirafay@gmail.com</a>{" "}
               with the subject line "Refund Request" and include the email address
               associated with your account. Refunds are processed within 5–10
               business days depending on your payment provider.

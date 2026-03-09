@@ -50,6 +50,7 @@ from lemon_squeezy_client import (
     parse_subscription_event,
     is_duplicate_event,
     record_event,
+    fetch_subscription_plan_by_email,
 )
 from supabase_client import (
     get_personalization_context,
@@ -86,11 +87,14 @@ from supabase_client import (
     refresh_personalization_context_all,
     get_user_usage,
     ensure_user_usage_row,
+    update_user_plan,
+    list_user_usage_user_ids,
     update_profile_plan,
     count_guest_reflections_by_guest_id,
     insert_guest_reflection,
     migrate_guest_reflections_to_user,
     delete_orphaned_guest_reflections_older_than,
+    cleanup_old_saved_reflections,
     insert_beta_feedback,
     list_beta_feedback_for_user,
     save_mirror_report,
@@ -498,6 +502,10 @@ class GuestSaveRequest(BaseModel):
 
 class BetaFeedbackRequest(BaseModel):
     content: str = Field(..., max_length=10000)
+
+
+class SyncSubscriptionRequest(BaseModel):
+    user_id: str | None = Field(None, max_length=100)
 
 
 @app.get("/")
@@ -1276,6 +1284,11 @@ def history_save(request: Request, body: SaveHistoryRequest, background_tasks: B
             mood_word=(body.mood_word or "").strip() or None,
             revisit_type=revisit,
         )
+        if not saved_id:
+            raise HTTPException(
+                status_code=502,
+                detail="Could not save reflection. Please try again.",
+            )
         background_tasks.add_task(refresh_personalization_context_for_user, user_id)
         return {"id": saved_id}
     except Exception as e:
@@ -1549,6 +1562,76 @@ def cleanup_guest_reflections(
         return {"deleted": deleted}
     except Exception as e:
         raise _server_error(e, "cleanup-guest-reflections")
+
+
+@app.post("/api/admin/cleanup-old-saved-reflections")
+@limiter.limit("10/minute")
+def admin_cleanup_old_saved_reflections(
+    request: Request,
+    x_cron_secret: str | None = Header(None, alias="X-Cron-Secret"),
+):
+    """Manually run cleanup of saved_reflections older than 7 days. Admin-only (X-Cron-Secret)."""
+    expected = os.getenv("CRON_SECRET", "")
+    if not expected or (x_cron_secret or "") != expected:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    try:
+        cleanup_old_saved_reflections()
+        return {"status": "ok"}
+    except Exception as e:
+        raise _server_error(e, "cleanup-old-saved-reflections")
+
+
+@app.post("/api/admin/sync-subscription")
+@limiter.limit("10/minute")
+def admin_sync_subscription(
+    request: Request,
+    body: SyncSubscriptionRequest,
+    x_cron_secret: str | None = Header(None, alias="X-Cron-Secret"),
+):
+    """
+    Compare Lemon Squeezy subscription status with user_usage.plan_type and repair mismatches.
+    Admin-only (X-Cron-Secret). Body: {} for all users, or {"user_id": "..."} for one user.
+    """
+    expected = os.getenv("CRON_SECRET", "")
+    if not expected or (x_cron_secret or "") != expected:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    try:
+        if body.user_id and str(body.user_id).strip():
+            user_ids = [str(body.user_id).strip()]
+        else:
+            user_ids = list_user_usage_user_ids()
+        checked = 0
+        repaired = 0
+        details = []
+        for uid in user_ids:
+            profile = get_profile(uid) if uid else None
+            email = (profile or {}).get("email") if profile else None
+            if not email or not str(email).strip():
+                details.append({"user_id": uid[:8] + "...", "result": "no_email"})
+                continue
+            ls_plan, ls_status = fetch_subscription_plan_by_email(str(email).strip())
+            usage_row = get_user_usage(uid)
+            stored_plan = (usage_row or {}).get("plan_type") or "trial"
+            stored_plan = str(stored_plan).strip().lower()
+            checked += 1
+            if ls_status == "active" and ls_plan:
+                expected_plan = ls_plan.strip().lower()
+                if stored_plan != expected_plan:
+                    update_user_plan(uid, expected_plan)
+                    repaired += 1
+                    details.append({"user_id": uid[:8] + "...", "result": "repaired", "from": stored_plan, "to": expected_plan})
+                else:
+                    details.append({"user_id": uid[:8] + "...", "result": "ok"})
+            else:
+                if stored_plan not in ("trial", "guest"):
+                    update_user_plan(uid, "trial")
+                    repaired += 1
+                    details.append({"user_id": uid[:8] + "...", "result": "repaired", "from": stored_plan, "to": "trial"})
+                else:
+                    details.append({"user_id": uid[:8] + "...", "result": "ok"})
+        return {"checked": checked, "repaired": repaired, "details": details}
+    except Exception as e:
+        raise _server_error(e, "sync-subscription")
 
 
 @app.post("/api/internal/cleanup-guests")

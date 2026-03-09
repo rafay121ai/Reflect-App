@@ -139,7 +139,9 @@ export async function openCheckout({ variantId, userId, userEmail, getAuthToken:
         if (onCheckoutSuccessMessage) onCheckoutSuccessMessage("Your mirror is ready. Activating your plan…");
         const updated = await waitForPlanUpdate();
         if (!updated && onCheckoutSuccessMessage) {
-          onCheckoutSuccessMessage("Your plan is activating — it may take a moment. Refresh if needed.");
+          onCheckoutSuccessMessage(
+            "Payment confirmed. Your plan is activating — if it doesn't unlock within a few minutes, contact support at essanirafay@gmail.com"
+          );
         }
         window.location.reload();
       }

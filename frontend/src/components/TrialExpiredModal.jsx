@@ -59,7 +59,7 @@ export default function TrialExpiredModal({ onFallbackSettings, onDismiss }) {
               Your space is still here.
             </h2>
             <p className="text-sm text-[#E5E7EB]">
-              Everything you've written is saved. A subscription keeps it that way — and keeps you reflecting, without limits.
+              Your reflections are kept for the duration of your beta access. A subscription keeps you reflecting, without limits.
             </p>
           </div>
 
