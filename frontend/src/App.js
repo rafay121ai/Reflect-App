@@ -599,6 +599,9 @@ function App() {
 
   const handleReflectAnother = () => {
     setSaveError(false);
+    setThought("");
+    setReflection(null);
+    setClosingText(null);
     setAppState(STATES.INPUT);
   };
 
@@ -670,6 +673,7 @@ function App() {
       } else {
         toast.error("We couldn't save this reflection. Please try again.");
       }
+      throw err;
     }
   };
 

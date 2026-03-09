@@ -94,6 +94,9 @@ const ClosingScreen = ({
   closingText,
   isLoading,
   isSlowClosing,
+  isSaving = false,
+  saveError = false,
+  onRetrySave,
   onDone,
 }) => {
   // Fallback text if API fails
@@ -305,12 +308,25 @@ const ClosingScreen = ({
           <button
             type="button"
             onClick={onDone}
+            disabled={isSaving}
             data-testid="closing-done-button"
-            className="bg-transparent border border-current rounded-full px-8 py-2.5 text-sm opacity-55 hover:opacity-90 transition-opacity duration-200 tracking-wide cursor-pointer text-[#5A5568]"
+            className="bg-transparent border border-current rounded-full px-8 py-2.5 text-sm opacity-55 hover:opacity-90 transition-opacity duration-200 tracking-wide cursor-pointer text-[#5A5568] disabled:opacity-40 disabled:cursor-not-allowed"
             style={{ letterSpacing: "0.05em" }}
           >
-            I'll carry this
+            {isSaving ? "Saving…" : "I'll carry this"}
           </button>
+          {saveError && onRetrySave && (
+            <p className="text-[13px] text-[rgba(255,255,255,0.7)]">
+              Couldn&apos;t save your reflection.{" "}
+              <button
+                type="button"
+                onClick={onRetrySave}
+                className="text-white underline underline-offset-2 hover:opacity-90 bg-transparent border-none cursor-pointer p-0 text-[13px]"
+              >
+                Retry
+              </button>
+            </p>
+          )}
         </motion.div>
       )}
       <div style={{ textAlign: "center", padding: "12px 0" }}>

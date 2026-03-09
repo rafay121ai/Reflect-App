@@ -279,6 +279,7 @@ const ReflectionFlow = ({
   const [lastMoodWord, setLastMoodWord] = useState(null);
   const [reflectionCount, setReflectionCount] = useState(0);
   const [mirrorReportEnabled, setMirrorReportEnabled] = useState(false);
+  const [isSavingForClose, setIsSavingForClose] = useState(false);
   const prevThoughtRef = useRef(originalThought);
   useEffect(() => {
     if (prevThoughtRef.current !== originalThought) {
@@ -513,18 +514,28 @@ const ReflectionFlow = ({
                 closingText={closingText}
                 isLoading={isLoadingClosing}
                 isSlowClosing={isSlowClosing}
-                onDone={() => {
-                  // Single Supabase write: save to history only when user explicitly completes the flow.
-                  if (onSaveHistory && originalThought && personalizedMirror != null) {
-                    const answers = Array.isArray(questionResponses)
-                      ? questionResponses.map((r) => ({ question: r?.question ?? "", response: r?.response ?? "" }))
-                      : [];
-                    const markOpened = userChoseRevisitType == null;
-                    onSaveHistory(originalThought.trim(), answers, personalizedMirror, lastMoodWord || null, {
-                      markOpened,
-                      revisitType: userChoseRevisitType || null,
-                    });
-                    setUserChoseRevisitType(null);
+                isSaving={isSavingForClose}
+                saveError={saveError}
+                onRetrySave={onRetrySave}
+                onDone={async () => {
+                  const hasSave = onSaveHistory && originalThought && personalizedMirror != null;
+                  if (hasSave) {
+                    setIsSavingForClose(true);
+                    try {
+                      const answers = Array.isArray(questionResponses)
+                        ? questionResponses.map((r) => ({ question: r?.question ?? "", response: r?.response ?? "" }))
+                        : [];
+                      const markOpened = userChoseRevisitType == null;
+                      await onSaveHistory(originalThought.trim(), answers, personalizedMirror, lastMoodWord || null, {
+                        markOpened,
+                        revisitType: userChoseRevisitType || null,
+                      });
+                      setUserChoseRevisitType(null);
+                    } catch {
+                      return;
+                    } finally {
+                      setIsSavingForClose(false);
+                    }
                   }
                   if (onReflectionComplete && originalThought && personalizedMirror != null) {
                     onReflectionComplete({
@@ -541,34 +552,6 @@ const ReflectionFlow = ({
                   }
                 }}
               />
-              {saveError && onRetrySave && (
-                <div
-                  style={{
-                    marginTop: "16px",
-                    textAlign: "center",
-                    fontSize: "13px",
-                    color: "rgba(255,255,255,0.6)",
-                  }}
-                >
-                  Couldn't save your reflection.{" "}
-                  <button
-                    type="button"
-                    onClick={onRetrySave}
-                    style={{
-                      color: "white",
-                      textDecoration: "underline",
-                      textUnderlineOffset: "3px",
-                      background: "none",
-                      border: "none",
-                      cursor: "pointer",
-                      fontSize: "13px",
-                      padding: 0,
-                    }}
-                  >
-                    Retry
-                  </button>
-                </div>
-              )}
             </>
           )}
         </AnimatePresence>

@@ -3,7 +3,7 @@
 
 CREATE TABLE IF NOT EXISTS public.user_usage (
   user_id UUID PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
-  plan_type TEXT NOT NULL DEFAULT 'free',
+  plan_type TEXT NOT NULL DEFAULT 'trial',
   reflections_used INTEGER NOT NULL DEFAULT 0,
   trial_total_used INTEGER NOT NULL DEFAULT 0,
   period_start TIMESTAMPTZ NOT NULL DEFAULT now(),
