@@ -20,7 +20,7 @@ export default function PrivacyPolicy() {
       </header>
       <main className="mx-auto max-w-2xl px-4 py-8 pb-16">
         <h1 className="text-2xl font-semibold text-[#2D3748] mb-2">Privacy Policy</h1>
-        <p className="text-sm text-[#64748B] mb-8">Last updated: February 2026</p>
+        <p className="text-sm text-[#64748B] mb-8">Last updated: April 2026</p>
 
         <div className="prose prose-sm max-w-none space-y-6 text-[#4A5568]">
           <section>
@@ -34,7 +34,9 @@ export default function PrivacyPolicy() {
             <h2 className="text-lg font-medium text-[#2D3748] mt-6 mb-2">Data we store</h2>
             <ul className="list-disc pl-5 space-y-1 text-sm leading-relaxed">
               <li><strong>Account profile</strong> — When you sign in, we store email and display name (from your auth provider or set by you) and preferences (e.g. notification settings) so we can personalise the experience.</li>
-              <li><strong>Reflections and history</strong> — Your thoughts, reflection content, mirror responses, and mood check-ins are stored per account and used only to show your history and insights.</li>
+              <li>
+                <strong>Reflections and history</strong> — Only fragments of your words are stored, not your full text verbatim. We cannot read what you write in full. What is stored is used solely to show your personal history and insights — never reviewed or accessed by us.
+              </li>
               <li><strong>Personalisation context</strong> — We keep derived summaries (e.g. recurring themes, recent mood words) to tailor content. We do not store your raw thoughts in this context; it is used only for things like gentle wording in notifications.</li>
             </ul>
           </section>
