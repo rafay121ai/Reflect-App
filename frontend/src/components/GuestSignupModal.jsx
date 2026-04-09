@@ -33,7 +33,7 @@ export default function GuestSignupModal({ stage, onSkip }) {
 
   useEffect(() => {
     posthog.capture("signup_modal_shown", { stage });
-  }, []);
+  }, [stage]);
 
   const handleSignUp = () => {
     posthog.capture("signup_completed");
