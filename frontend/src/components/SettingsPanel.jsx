@@ -588,6 +588,13 @@ const SettingsPanel = ({ apiBase, onClose, onOpenSignIn, usage, onRefetchUsage }
                 target="_blank"
               />
               <ActionRow
+                icon={ChevronRight}
+                label="Refund Policy"
+                sublabel="Trial, billing, and cancellation"
+                href="https://app.ireflect.app/refund-policy"
+                target="_blank"
+              />
+              <ActionRow
                 icon={Download}
                 label="Export data (coming soon)"
                 sublabel="We'll email you a copy — available soon."
