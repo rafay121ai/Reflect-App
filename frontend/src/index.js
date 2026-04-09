@@ -1,4 +1,5 @@
 import * as Sentry from "@sentry/react";
+import posthog from "posthog-js";
 
 const SENTRY_DSN = process.env.REACT_APP_SENTRY_DSN;
 if (SENTRY_DSN) {
@@ -18,6 +19,19 @@ if (SENTRY_DSN) {
     },
   });
 }
+
+posthog.init("phc_5ocPLOSlqoswH5Ws1DNza33Tay9Gynt7UpBhdJBxqWp", {
+  api_host: "https://us.i.posthog.com",
+  person_profiles: "identified_only",
+  capture_pageview: true,
+  capture_pageleave: true,
+  session_recording: {
+    maskAllInputs: false,
+    maskInputOptions: {
+      password: true,
+    },
+  },
+});
 
 import React from "react";
 import ReactDOM from "react-dom/client";
