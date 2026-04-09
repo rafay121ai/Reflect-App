@@ -1,3 +1,5 @@
+import { useEffect } from "react";
+import posthog from "posthog-js";
 import { motion, AnimatePresence } from "framer-motion";
 import { useAuth } from "../contexts/AuthContext";
 
@@ -29,7 +31,12 @@ export default function GuestSignupModal({ stage, onSkip }) {
   const { signInWithGoogle } = useAuth();
   const copy = STAGE_COPY[stage] ?? STAGE_COPY.soft;
 
+  useEffect(() => {
+    posthog.capture("signup_modal_shown", { stage });
+  }, []);
+
   const handleSignUp = () => {
+    posthog.capture("signup_completed");
     // Redirect through Google with trial=true so AuthCallback can migrate guest reflections
     signInWithGoogle?.({ trial: true });
   };
