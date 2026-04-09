@@ -1,4 +1,5 @@
 import { useEffect } from "react";
+import posthog from "posthog-js";
 import { motion, AnimatePresence } from "framer-motion";
 
 const WELCOME_KEY = "reflect_trial_welcomed";
@@ -24,6 +25,7 @@ export function hasSeenTrialWelcome() {
 export default function TrialWelcomeModal({ onClose }) {
   useEffect(() => {
     markTrialWelcomed();
+    posthog.capture("trial_started");
     const t = setTimeout(() => {
       onClose?.();
     }, 6000);

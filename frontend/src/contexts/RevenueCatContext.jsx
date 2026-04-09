@@ -2,7 +2,8 @@
  * RevenueCat React context: configures SDK, syncs with auth, exposes Premium status and paywall/Customer Center.
  * Use useRevenueCat() for isPremium, presentPaywall, presentCustomerCenter, restorePurchases.
  */
-import { createContext, useContext, useEffect, useState, useCallback } from "react";
+import { createContext, useContext, useEffect, useRef, useState, useCallback } from "react";
+import posthog from "posthog-js";
 import { useAuth } from "./AuthContext";
 import {
   getRevenueCatApiKey,
@@ -45,6 +46,14 @@ export function RevenueCatProvider({ children }) {
   const [error, setError] = useState(null);
 
   const isPremium = Boolean(customerInfo?.entitlements?.active?.Premium?.isActive);
+
+  const prevIsPremiumRef = useRef(null);
+  useEffect(() => {
+    if (prevIsPremiumRef.current === false && isPremium === true) {
+      posthog.capture("upgrade_completed");
+    }
+    prevIsPremiumRef.current = isPremium;
+  }, [isPremium]);
 
   const refreshCustomerInfo = useCallback(async () => {
     const result = await getCustomerInfo();

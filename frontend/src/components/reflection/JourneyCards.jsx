@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from "react";
+import posthog from "posthog-js";
 import { motion, AnimatePresence } from "framer-motion";
 import { useSwipeable } from "react-swipeable";
 import { Heart, Compass, ChevronLeft, ChevronRight } from "lucide-react";
@@ -45,8 +46,12 @@ const JourneyCards = ({ sections, onComplete }) => {
   };
 
   useEffect(() => {
+    posthog.capture("journey_card_opened");
+  }, []);
+
+  useEffect(() => {
     if (autoAdvanceRef.current) clearTimeout(autoAdvanceRef.current);
-    
+
     autoAdvanceRef.current = setTimeout(() => {
       if (currentCard < cardConfig.length - 1) {
         setCurrentCard(prev => prev + 1);

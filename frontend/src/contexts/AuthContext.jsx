@@ -1,4 +1,5 @@
 import { createContext, useContext, useEffect, useState } from "react";
+import posthog from "posthog-js";
 import { supabase } from "../lib/supabase";
 import { setAuthToken, syncProfile } from "../lib/api";
 import { getBackendUrl } from "../lib/config";
@@ -75,6 +76,7 @@ export function AuthProvider({ children }) {
           setUser(s?.user ?? null);
           setAuthToken(s?.access_token ?? null);
           setLoading(false);
+          if (s?.user?.email) posthog.identify(s.user.email, { email: s.user.email });
           if (s?.access_token) syncProfile(API_BASE).catch(() => {});
         }
       } catch (err) {
@@ -90,6 +92,7 @@ export function AuthProvider({ children }) {
         setSession(session);
         setUser(session?.user ?? null);
         setAuthToken(session?.access_token ?? null);
+        if (session?.user?.email) posthog.identify(session.user.email, { email: session.user.email });
         if (session?.access_token) syncProfile(API_BASE).catch(() => {});
       }
     });

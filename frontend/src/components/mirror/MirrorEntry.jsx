@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect } from "react";
+import posthog from "posthog-js";
 import { motion, AnimatePresence } from "framer-motion";
 
 /**
@@ -15,6 +16,14 @@ export default function MirrorEntry({ archetypeName, isLoading, onOpen, isSlow, 
       if (timeoutRef.current) clearTimeout(timeoutRef.current);
     };
   }, []);
+
+  const archetypeViewedRef = useRef(false);
+  useEffect(() => {
+    if (!isLoading && archetypeName && !archetypeViewedRef.current) {
+      archetypeViewedRef.current = true;
+      posthog.capture("archetype_viewed");
+    }
+  }, [isLoading, archetypeName]);
 
   const handleTap = (e) => {
     if (isLoading || tapped) return;

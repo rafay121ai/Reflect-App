@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from "react";
+import posthog from "posthog-js";
 import "./App.css";
 import axios from "axios";
 import { AnimatePresence } from "framer-motion";
@@ -103,10 +104,28 @@ function App() {
   const authRequired = !!supabase;
   const userId = user?.id ?? getOrCreateUserIdentifier();
   const prevUserRef = useRef(user);
+  const sessionStartRef = useRef(Date.now());
+  const thoughtRef = useRef(thought);
+  const returningUserFiredRef = useRef(false);
 
   // Silent health ping on load to wake Railway (cold start)
   useEffect(() => {
     fetch(`${API}/health`, { method: "GET" }).catch(() => {});
+  }, []);
+
+  // Keep thoughtRef in sync so beforeunload can read the latest value
+  useEffect(() => { thoughtRef.current = thought; }, [thought]);
+
+  // Track session duration and abandoned reflections on tab close
+  useEffect(() => {
+    const handler = () => {
+      if (thoughtRef.current?.trim()) posthog.capture("reflection_abandoned");
+      posthog.capture("session_ended", {
+        duration_seconds: Math.round((Date.now() - sessionStartRef.current) / 1000),
+      });
+    };
+    window.addEventListener("beforeunload", handler);
+    return () => window.removeEventListener("beforeunload", handler);
   }, []);
 
   // Clear all reflection, mirror, mood, and personalization state on logout so no previous session data remains visible.
@@ -280,8 +299,13 @@ function App() {
     axios
       .get(`${API}/history`, { headers: getAuthHeaders() })
       .then((res) => {
-        setHistoryAll(Array.isArray(res.data?.items) ? res.data.items : []);
+        const items = Array.isArray(res.data?.items) ? res.data.items : [];
+        setHistoryAll(items);
         setHistoryError(false);
+        if (items.length > 0 && !returningUserFiredRef.current) {
+          returningUserFiredRef.current = true;
+          posthog.capture("returning_user");
+        }
       })
       .catch(() => setHistoryError(true));
   }, [user?.id, authRequired]);
@@ -389,6 +413,13 @@ function App() {
     }
   }, [usage, user, authRequired]);
 
+  // Fire day_2_return / day_5_return based on trial days remaining (7-day trial)
+  useEffect(() => {
+    if (!usage || usage.plan_type !== "trial" || usage.is_expired) return;
+    if (usage.days_remaining === 5) posthog.capture("day_2_return");
+    if (usage.days_remaining === 2) posthog.capture("day_5_return");
+  }, [usage]);
+
   // Daily reminder nudge: when on main screen (and Settings closed), past reminder time, not reflected today. Re-runs when Settings closes so turning the nudge on there triggers a check.
   useEffect(() => {
     if (!user || appState !== STATES.INPUT || settingsPanelOpen) return;
@@ -439,6 +470,7 @@ function App() {
 
     setReflectTimeoutError(false);
     setIsReflectSubmitting(true);
+    posthog.capture("reflection_started");
     setAppState(STATES.LOADING);
 
     const controller = new AbortController();
@@ -465,6 +497,7 @@ function App() {
         flowMode: response.data.flow_mode || "standard",
       });
       setAppState(STATES.REFLECTION);
+      posthog.capture("reflection_completed");
     } catch (error) {
       if (axios.isCancel(error) || error?.name === "AbortError" || error?.code === "ERR_CANCELED") {
         setReflectTimeoutError(true);
@@ -475,6 +508,7 @@ function App() {
       const isLimitReached = error.response?.status === 429
         && (error.response?.data?.error === "Reflection limit reached" || error.response?.data?.detail === "Reflection limit reached");
       if (isLimitReached) {
+        posthog.capture("paywall_hit");
         if (isRevenueCatSupported) {
           try {
             await presentPaywall();

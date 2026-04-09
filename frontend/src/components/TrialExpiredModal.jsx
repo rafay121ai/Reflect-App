@@ -1,3 +1,5 @@
+import { useEffect } from "react";
+import posthog from "posthog-js";
 import { motion, AnimatePresence } from "framer-motion";
 import { toast } from "sonner";
 import { openCheckout, getLemonVariants } from "../lib/lemonSqueezy";
@@ -16,6 +18,10 @@ function isNative() {
 export default function TrialExpiredModal({ onFallbackSettings, onDismiss }) {
   const { user, session } = useAuth();
   const variants = getLemonVariants();
+
+  useEffect(() => {
+    posthog.capture("trial_expired");
+  }, []);
 
   const handleSeePlans = () => {
     if (!user?.id || isNative() || !variants.isConfigured) {

@@ -8,6 +8,7 @@
  * 4. Account
  */
 import { useState, useEffect, useCallback } from "react";
+import posthog from "posthog-js";
 import { Link } from "react-router-dom";
 import { motion } from "framer-motion";
 import { X, Check, Download, Trash2, User, ChevronRight, Crown, RefreshCw } from "lucide-react";
@@ -251,6 +252,7 @@ const SettingsPanel = ({ apiBase, onClose, onOpenSignIn, usage, onRefetchUsage }
   const handleModeChange = (newMode) => {
     setMode(newMode);
     setReflectionMode(newMode);
+    posthog.capture("reflection_mode_selected", { mode: newMode });
   };
 
   const handlePauseReminders = () => {

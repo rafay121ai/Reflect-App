@@ -4,6 +4,7 @@
  * On web: primary way to explain limit and direct to Lemon Squeezy checkout.
  */
 import { useState, useEffect } from "react";
+import posthog from "posthog-js";
 import { motion } from "framer-motion";
 import { Crown } from "lucide-react";
 import { toast } from "sonner";
@@ -36,6 +37,7 @@ export default function PaywallLimitModal({ onUpgrade, onDismiss }) {
   });
 
   const handleUpgrade = () => {
+    posthog.capture("upgrade_clicked");
     if (isNative() && isRevenueCatSupported) {
       presentPaywall().catch(() => {});
       onUpgrade?.();
@@ -83,6 +85,7 @@ export default function PaywallLimitModal({ onUpgrade, onDismiss }) {
                 <button
                   type="button"
                   onClick={() => {
+                    posthog.capture("upgrade_clicked");
                     openCheckout(
                       { variantId: variants.variantMonthly, userId: user?.id, userEmail: user?.email || "", ...checkoutOpts() },
                       (e) => e && window.alert?.(e)
@@ -96,6 +99,7 @@ export default function PaywallLimitModal({ onUpgrade, onDismiss }) {
                 <button
                   type="button"
                   onClick={() => {
+                    posthog.capture("upgrade_clicked");
                     openCheckout(
                       { variantId: variants.variantYearly, userId: user?.id, userEmail: user?.email || "", ...checkoutOpts() },
                       (e) => e && window.alert?.(e)
