@@ -365,7 +365,7 @@ function App() {
         bannerMsg = "Last day. Your reflections don't disappear — but new ones will need an upgrade.";
       } else if (daysRemaining === 2) {
         bannerMsg = "2 days left on your trial.";
-      } else if (daysRemaining === 7) {
+      } else if (daysRemaining === 3) {
         const count = typeof used === "number" ? used : 0;
         bannerMsg = `You're halfway through your trial. ${count} reflection${count === 1 ? "" : "s"} in. Keep going — the mirror gets sharper.`;
       }
@@ -992,7 +992,7 @@ function App() {
               className="text-center"
               style={{ fontSize: 11, color: "#A0AEC0", marginBottom: 16 }}
             >
-              Free for 14 days. No card required.
+              Free for 7 days. No card required.
             </p>
             <div className="mt-6">
               <button
@@ -1101,7 +1101,7 @@ function App() {
                 ) : !user ? (
                   <div className="py-4 px-4 flex flex-col items-center gap-3">
                     <p className="text-center" style={{ fontSize: 13, color: "#718096" }}>
-                      Sign in to see your reflections and unlock your full mirror. Free for 14 days.
+                      Sign in to see your reflections and unlock your full mirror. Free for 7 days.
                     </p>
                     <button
                       type="button"

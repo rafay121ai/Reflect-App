@@ -31,6 +31,7 @@ import { AuthProvider } from "./contexts/AuthContext";
 import { RevenueCatProvider } from "./contexts/RevenueCatContext";
 import PrivacyPolicy from "./pages/PrivacyPolicy";
 import TermsOfService from "./pages/TermsOfService";
+import RefundPolicy from "./pages/RefundPolicy";
 import AuthCallback from "./pages/AuthCallback";
 import AuthScreen from "./components/AuthScreen";
 
@@ -56,6 +57,7 @@ root.render(
               <Route path="/login" element={<LoginPage />} />
               <Route path="/privacy" element={<PrivacyPolicy />} />
               <Route path="/terms" element={<TermsOfService />} />
+              <Route path="/refund-policy" element={<RefundPolicy />} />
             </Routes>
           </RevenueCatProvider>
         </AuthProvider>

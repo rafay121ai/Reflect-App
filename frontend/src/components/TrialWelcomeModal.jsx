@@ -47,7 +47,7 @@ export default function TrialWelcomeModal({ onClose }) {
         >
           <div className="space-y-2">
             <h2 className="text-lg font-medium text-[#2D3748]">
-              You're in. Two weeks, all yours.
+              You're in. One week, all yours.
             </h2>
             <p className="text-sm text-[#64748B]">
               Your reflections are here, private and waiting. There's no right way to use this — just come back when something's on your mind.

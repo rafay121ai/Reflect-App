@@ -68,22 +68,11 @@ export default function TermsOfService() {
           <section>
             <h2 className="text-lg font-medium text-[#2D3748] mt-6 mb-2">Refunds</h2>
             <p className="text-sm leading-relaxed">
-              If you are not satisfied with your purchase, you may request a full
-              refund within 14 days of your original payment date, no questions
-              asked. To request a refund, email{" "}
-              <a href="mailto:essanirafay@gmail.com">essanirafay@gmail.com</a>{" "}
-              with the subject line "Refund Request" and include the email address
-              associated with your account. Refunds are processed within 5–10
-              business days depending on your payment provider.
-            </p>
-            <p className="text-sm leading-relaxed">
-              After 14 days, refunds are issued at our discretion. If you believe
-              you were charged in error, contact us and we will resolve it promptly.
-            </p>
-            <p className="text-sm leading-relaxed">
-              Cancelling your subscription stops future charges but does not
-              automatically issue a refund for the current billing period.
-              To cancel, go to Settings → Manage Subscription in the app.
+              See our <Link to="/refund-policy" className="underline hover:text-[#FFB4A9] transition-colors">Refund Policy</Link> for full details.
+              In short: all sales are final after the 7-day free trial ends.
+              Cancel any time before the trial ends and you will not be charged.
+              For billing errors, contact{" "}
+              <a href="mailto:essanirafay@gmail.com">essanirafay@gmail.com</a>.
             </p>
           </section>
 

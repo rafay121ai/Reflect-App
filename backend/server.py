@@ -585,7 +585,7 @@ def _llm_error_message(e: Exception) -> str:
 
 def _activate_trial_if_new(user_id: str) -> None:
     """
-    Activate 14-day trial for brand new users. Idempotent.
+    Activate 7-day trial for brand new users. Idempotent.
     Also syncs profiles.plan_type to 'trial'.
     """
     try:
@@ -1414,7 +1414,7 @@ def usage_get(user_id: str = Depends(require_user_id)):
     """
     Return current usage/plan state for this user.
     plan_type: 'trial' | 'monthly' | 'yearly'
-    trial_expires_at: trial_start + 14 days (ISO) for trial users.
+    trial_expires_at: trial_start + 7 days (ISO) for trial users.
     """
     from datetime import timedelta
     from usage_limits import TRIAL_DAYS
